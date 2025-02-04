@@ -4,7 +4,7 @@ import (
 	// The set of controllers this controller process runs.
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/pipelinerun"
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/taskrun"
-	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/tektonpruner"
+	//"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/tektonpruner"
 
 	// This defines the shared main for injected controllers.
 	"knative.dev/pkg/injection/sharedmain"
@@ -12,7 +12,7 @@ import (
 
 func main() {
 	sharedmain.Main("tekton-pruner-controller",
-		tektonpruner.NewController,
+		//tektonpruner.NewController,
 		pipelinerun.NewController,
 		taskrun.NewController,
 	)

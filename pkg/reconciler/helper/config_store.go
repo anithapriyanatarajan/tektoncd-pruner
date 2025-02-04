@@ -3,7 +3,7 @@ package helper
 import (
 	"sync"
 
-	tektonprunerv1alpha1 "github.com/openshift-pipelines/tektoncd-pruner/pkg/apis/tektonpruner/v1alpha1"
+	//tektonprunerv1alpha1 "github.com/openshift-pipelines/tektoncd-pruner/pkg/apis/tektonpruner/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
@@ -12,38 +12,61 @@ import (
 // to manage different resources and different fields
 type PrunerResourceType string
 type PrunerFieldType string
+type EnforcedConfigLevel string
 
 const (
-	PrunerResourceTypePipeline PrunerResourceType = "pipeline"
-	PrunerResourceTypeTask     PrunerResourceType = "task"
+	PrunerResourceTypePipelineRun PrunerResourceType = "pipelinerun"
+	PrunerResourceTypeTaskRun     PrunerResourceType = "taskrun"
 
 	PrunerFieldTypeTTLSecondsAfterFinished PrunerFieldType = "ttlSecondsAfterFinished"
 	PrunerFieldTypeSuccessfulHistoryLimit  PrunerFieldType = "successfulHistoryLimit"
 	PrunerFieldTypeFailedHistoryLimit      PrunerFieldType = "failedHistoryLimit"
+
+	EnforcedConfigLevelGlobal    EnforcedConfigLevel = "global"
+	EnforcedConfigLevelNamespace EnforcedConfigLevel = "namespace"
+	EnforcedConfigLevelResource  EnforcedConfigLevel = "resource"
 )
 
+// Run represents a configuration for selecting a PipelineRun or TaskRun.
+type Run struct {
+	Selector Selector `json:"selector"`
+}
+
+// used to hold the config of a specific pr/tr
+type Selector struct {
+	PipelineName      string                 `yaml:"pipelineName,omitempty"`
+	TaskName          string                 `yaml:"taskName,omitempty"`
+	MatchLabels       map[string]string      `yaml:"matchLabels,omitempty"`
+	MatchAnnotations  map[string]string      `yaml:"matchAnnotations,omitempty"`
+	TTLSecondsAfterFinished *int32              `yaml:"ttlSecondsAfterFinished"`
+	SuccessfulHistoryLimit  *int32              `yaml:"successfulHistoryLimit"`
+	FailedHistoryLimit      *int32              `yaml:"failedHistoryLimit"`
+}
+
 // used to hold the config of a specific namespace
-type PrunerResourceSpec struct {
+type NamespaceSpec struct {
 	// EnforcedConfigLevel allowed values: global, namespace, resource (default: resource)
-	EnforcedConfigLevel     *tektonprunerv1alpha1.EnforcedConfigLevel `yaml:"enforcedConfigLevel"`
+	EnforcedConfigLevel     EnforcedConfigLevel `yaml:"enforcedConfigLevel"`
 	TTLSecondsAfterFinished *int32                                    `yaml:"ttlSecondsAfterFinished"`
 	SuccessfulHistoryLimit  *int32                                    `yaml:"successfulHistoryLimit"`
 	FailedHistoryLimit      *int32                                    `yaml:"failedHistoryLimit"`
 	HistoryLimit            *int32                                    `yaml:"historyLimit"`
-	Pipelines               []tektonprunerv1alpha1.ResourceSpec       `yaml:"pipelines"`
-	Tasks                   []tektonprunerv1alpha1.ResourceSpec       `yaml:"tasks"`
+	PipelineRuns               []Run      `yaml:"pipelineruns"`
+	TaskRuns                   []Run       `yaml:"taskruns"`
 }
+
+
 
 // used to hold the config of namespaces
 // and global config
 type PrunerConfig struct {
 	// EnforcedConfigLevel allowed values: global, namespace, resource (default: resource)
-	EnforcedConfigLevel     *tektonprunerv1alpha1.EnforcedConfigLevel `yaml:"enforcedConfigLevel"`
+	EnforcedConfigLevel     EnforcedConfigLevel `yaml:"enforcedConfigLevel"`
 	TTLSecondsAfterFinished *int32                                    `yaml:"ttlSecondsAfterFinished"`
 	SuccessfulHistoryLimit  *int32                                    `yaml:"successfulHistoryLimit"`
 	FailedHistoryLimit      *int32                                    `yaml:"failedHistoryLimit"`
 	HistoryLimit            *int32                                    `yaml:"historyLimit"`
-	Namespaces              map[string]PrunerResourceSpec             `yaml:"namespaces"`
+	Namespaces              map[string]NamespaceSpec             `yaml:"namespaces"`
 }
 
 // defines the store structure
@@ -51,7 +74,7 @@ type PrunerConfig struct {
 type prunerConfigStore struct {
 	mutex            sync.RWMutex
 	globalConfig     PrunerConfig
-	namespacedConfig map[string]PrunerResourceSpec
+	namespacedConfig map[string]NamespaceSpec
 }
 
 var (
@@ -77,15 +100,18 @@ func (ps *prunerConfigStore) LoadGlobalConfig(configMap *corev1.ConfigMap) error
 	ps.globalConfig = *globalConfig
 
 	if ps.globalConfig.Namespaces == nil {
-		ps.globalConfig.Namespaces = map[string]PrunerResourceSpec{}
+		ps.globalConfig.Namespaces = map[string]NamespaceSpec{}
 	}
 
 	if ps.namespacedConfig == nil {
-		ps.namespacedConfig = map[string]PrunerResourceSpec{}
+		ps.namespacedConfig = map[string]NamespaceSpec{}
 	}
 
 	return nil
 }
+
+// THE ENTIRE CODE BLOCK BELOW HAS TO BE UPDATED TO LOAD THE CONFIGMAP FROM NAMESPACE AND UPDATE THE CONFIGSTORE ACCORDINGLY
+/*
 
 func (ps *prunerConfigStore) UpdateNamespacedSpec(prunerCR *tektonprunerv1alpha1.TektonPruner) {
 	ps.mutex.Lock()
@@ -321,3 +347,5 @@ func (ps *prunerConfigStore) GetTaskFailedHistoryLimitCount(namespace, name stri
 	enforcedConfigLevel := ps.GetTaskEnforcedConfigLevel(namespace, name)
 	return getResourceFieldData(ps.namespacedConfig, ps.globalConfig, namespace, name, PrunerResourceTypeTask, PrunerFieldTypeFailedHistoryLimit, enforcedConfigLevel)
 }
+
+*/

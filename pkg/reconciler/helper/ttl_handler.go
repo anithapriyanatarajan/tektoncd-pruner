@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	tektonprunerv1alpha1 "github.com/openshift-pipelines/tektoncd-pruner/pkg/apis/tektonpruner/v1alpha1"
+	//tektonprunerv1alpha1 "github.com/openshift-pipelines/tektoncd-pruner/pkg/apis/tektonpruner/v1alpha1"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,7 +25,7 @@ type TTLResourceFuncs interface {
 	Ignore(resource metav1.Object) bool
 	GetTTLSecondsAfterFinished(namespace, name string) *int32
 	GetDefaultLabelKey() string
-	GetEnforcedConfigLevel(namespace, name string) tektonprunerv1alpha1.EnforcedConfigLevel
+	GetEnforcedConfigLevel(namespace, name string) EnforcedConfigLevel
 }
 
 type TTLHandler struct {
@@ -101,7 +101,7 @@ func (th *TTLHandler) updateAnnotationTTLSeconds(ctx context.Context, resource m
 
 	// if the "enforceConfigLevel" is not resource level, do not consider ttl from the resource annotation
 	// take it from namespace config or global config
-	if th.resourceFn.GetEnforcedConfigLevel(resource.GetNamespace(), resourceName) != tektonprunerv1alpha1.EnforcedConfigLevelResource {
+	if th.resourceFn.GetEnforcedConfigLevel(resource.GetNamespace(), resourceName) != EnforcedConfigLevelResource {
 		needsUpdate = true
 	}
 
