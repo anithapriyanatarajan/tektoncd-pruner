@@ -220,6 +220,6 @@ func (prf *PipelineRunFuncs) GetFailedHistoryLimitCount(namespace, name string) 
 	return helper.PrunerConfigStore.GetPipelineFailedHistoryLimitCount(namespace, name)
 }
 
-func (prf *PipelineRunFuncs) GetEnforcedConfigLevel(namespace, name string) EnforcedConfigLevel {
+func (prf *PipelineRunFuncs) GetEnforcedConfigLevel(namespace, name string) helper.EnforcedConfigLevel {
 	return helper.PrunerConfigStore.GetPipelineEnforcedConfigLevel(namespace, name)
 }
