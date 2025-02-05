@@ -112,6 +112,52 @@ func (ps *prunerConfigStore) LoadGlobalConfig(configMap *corev1.ConfigMap) error
 	return nil
 }
 
+func (ps *prunerConfigStore) UpdateNamespacedSpec(namespace string) error {
+    ps.mutex.Lock()
+    defer ps.mutex.Unlock()
+
+    // Fetch ConfigMap for the given namespace
+    configMap, err := ps.getConfigMap(namespace)  // Assuming this method retrieves the ConfigMap
+    if err != nil {
+		log.Printf("Could not fetch config map for namespace %s, skipping update", namespace)
+        return nil  // Return error if ConfigMap retrieval fails
+    }
+
+    // If no ConfigMap is found, log the information and skip the update
+    if configMap == nil || configMap.Data[PrunerNamespaceConfigKey] == "" {
+        log.Printf("No valid config map found for namespace %s, skipping update", namespace)
+        return nil  // Simply return without doing anything
+    }
+
+    // Create the NamespaceSpec from the ConfigMap data
+    namespacedSpec := NamespaceSpec{}
+    err = yaml.Unmarshal([]byte(configMap.Data[PrunerNamespaceConfigKey]), &namespacedSpec)
+    if err != nil {
+        log.Printf("Failed to unmarshal config data for namespace %s: %v", namespace, err)
+        return fmt.Errorf("failed to unmarshal config data for namespace %s: %v", namespace, err)
+    }
+
+    // Update the namespacedConfig map
+    ps.namespacedConfig[namespace] = namespacedSpec
+
+    return nil
+}
+
+func (ps *prunerConfigStore) getConfigMap(namespace string) (*corev1.ConfigMap, error) {
+	// Retrieve the Kubernetes client from the context (assuming it's already initialized)
+	client := ps.kubeclient.CoreV1().ConfigMaps(namespace)
+
+	// Attempt to fetch the ConfigMap with the name 'PrunerConfigMapName'
+	configMap, err := client.Get(context.TODO(), helper.PrunerNamespaceConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		// Return nil and the error if the ConfigMap cannot be fetched
+		return nil, fmt.Errorf("failed to get ConfigMap '%s' in namespace '%s': %v", helper.PrunerConfigMapName, namespace, err)
+	}
+
+	// Return the retrieved ConfigMap and a nil error if successful
+	return configMap, nil
+}
+
 /*
 func (ps *prunerConfigStore) UpdateNamespacedSpec(prunerCR *tektonprunerv1alpha1.TektonPruner) {
 	ps.mutex.Lock()

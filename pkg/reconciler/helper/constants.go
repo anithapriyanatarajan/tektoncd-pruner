@@ -26,8 +26,11 @@ const (
 
 	// name of the config map to hold pruner global config data
 	PrunerConfigMapName = "tekton-pruner-default-spec"
+	// name of the config map to help pruners ns config data
+	PrunerNamespaceConfigMapName = "tekton-pruner-spec"
 	// name of the key to fetch global config data
 	PrunerGlobalConfigKey = "global-config"
+	PrunerNamespaceConfigKey = "config"
 
 	// number of workers on PipelineRun controller
 	DefaultTTLConcurrentWorkersPipelineRun = int(5)

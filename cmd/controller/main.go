@@ -12,7 +12,7 @@ import (
 
 func main() {
 	sharedmain.Main("tekton-pruner-controller",
-		//tektonpruner.NewController,
+		tektonpruner.NewController,
 		pipelinerun.NewController,
 		taskrun.NewController,
 	)
