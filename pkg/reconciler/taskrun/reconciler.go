@@ -8,8 +8,7 @@ import (
 	"go.uber.org/zap"
 	"k8s.io/client-go/kubernetes"
 
-	tektonprunerv1alpha1 "github.com/openshift-pipelines/tektoncd-pruner/pkg/apis/tektonpruner/v1alpha1"
-	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/helper"
+	"github.com/openshift-pipelines/tektoncd-pruner/pkg/config"
 	pipelinev1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 	pipelineversioned "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	taskrunreconciler "github.com/tektoncd/pipeline/pkg/client/injection/reconciler/pipeline/v1/taskrun"
@@ -25,8 +24,8 @@ import (
 // SimpleDeployment resources.
 type Reconciler struct {
 	kubeclient     kubernetes.Interface
-	ttlHandler     *helper.TTLHandler
-	historyLimiter *helper.HistoryLimiter
+	ttlHandler     *config.TTLHandler
+	historyLimiter *config.HistoryLimiter
 }
 
 // Check that our Reconciler implements Interface
@@ -81,7 +80,7 @@ type TaskRunFuncs struct {
 }
 
 func (trf *TaskRunFuncs) Type() string {
-	return helper.KindTaskRun
+	return config.KindTaskRun
 }
 
 func (trf *TaskRunFuncs) List(ctx context.Context, namespace, labelSelector string) ([]metav1.Object, error) {
@@ -144,7 +143,7 @@ func (trf *TaskRunFuncs) GetCompletionTime(resource metav1.Object) (metav1.Time,
 func (trf *TaskRunFuncs) Ignore(resource metav1.Object) bool {
 	// labels and annotations are not populated, lets wait sometime
 	if resource.GetLabels() == nil {
-		if resource.GetAnnotations() == nil || resource.GetAnnotations()[helper.AnnotationTTLSecondsAfterFinished] == "" {
+		if resource.GetAnnotations() == nil || resource.GetAnnotations()[config.AnnotationTTLSecondsAfterFinished] == "" {
 			return true
 		}
 	}
@@ -199,21 +198,21 @@ func (trf *TaskRunFuncs) IsFailed(resource metav1.Object) bool {
 }
 
 func (trf *TaskRunFuncs) GetDefaultLabelKey() string {
-	return helper.LabelTaskName
+	return config.LabelTaskName
 }
 
 func (trf *TaskRunFuncs) GetTTLSecondsAfterFinished(namespace, taskName string) *int32 {
-	return helper.PrunerConfigStore.GetTaskTTLSecondsAfterFinished(namespace, taskName)
+	return config.PrunerConfigStore.GetTaskTTLSecondsAfterFinished(namespace, taskName)
 }
 
 func (trf *TaskRunFuncs) GetSuccessHistoryLimitCount(namespace, name string) *int32 {
-	return helper.PrunerConfigStore.GetTaskSuccessHistoryLimitCount(namespace, name)
+	return config.PrunerConfigStore.GetTaskSuccessHistoryLimitCount(namespace, name)
 }
 
 func (trf *TaskRunFuncs) GetFailedHistoryLimitCount(namespace, name string) *int32 {
-	return helper.PrunerConfigStore.GetTaskFailedHistoryLimitCount(namespace, name)
+	return config.PrunerConfigStore.GetTaskFailedHistoryLimitCount(namespace, name)
 }
 
-func (trf *TaskRunFuncs) GetEnforcedConfigLevel(namespace, name string) tektonprunerv1alpha1.EnforcedConfigLevel {
-	return helper.PrunerConfigStore.GetTaskEnforcedConfigLevel(namespace, name)
+func (trf *TaskRunFuncs) GetEnforcedConfigLevel(namespace, name string) config.EnforcedConfigLevel {
+	return config.PrunerConfigStore.GetTaskEnforcedConfigLevel(namespace, name)
 }

@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	tektonprunerv1alpha1 "github.com/openshift-pipelines/tektoncd-pruner/pkg/apis/tektonpruner/v1alpha1"
-	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/helper"
+	"github.com/openshift-pipelines/tektoncd-pruner/pkg/config"
 	pipelinev1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 	pipelineversioned "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	pipelinerunreconciler "github.com/tektoncd/pipeline/pkg/client/injection/reconciler/pipeline/v1/pipelinerun"
@@ -23,8 +22,8 @@ import (
 // Reconciler
 type Reconciler struct {
 	kubeclient     kubernetes.Interface
-	ttlHandler     *helper.TTLHandler
-	historyLimiter *helper.HistoryLimiter
+	ttlHandler     *config.TTLHandler
+	historyLimiter *config.HistoryLimiter
 }
 
 // Check that our Reconciler implements Interface
@@ -73,7 +72,7 @@ type PipelineRunFuncs struct {
 }
 
 func (prf *PipelineRunFuncs) Type() string {
-	return helper.KindPipelineRun
+	return config.KindPipelineRun
 }
 
 func (prf *PipelineRunFuncs) List(ctx context.Context, namespace, label string) ([]metav1.Object, error) {
@@ -133,7 +132,7 @@ func (prf *PipelineRunFuncs) GetCompletionTime(resource metav1.Object) (metav1.T
 func (prf *PipelineRunFuncs) Ignore(resource metav1.Object) bool {
 	// labels and annotations are not populated, lets wait sometime
 	if resource.GetLabels() == nil {
-		if resource.GetAnnotations() == nil || resource.GetAnnotations()[helper.AnnotationTTLSecondsAfterFinished] == "" {
+		if resource.GetAnnotations() == nil || resource.GetAnnotations()[config.AnnotationTTLSecondsAfterFinished] == "" {
 			return true
 		}
 	}
@@ -205,21 +204,21 @@ func (prf *PipelineRunFuncs) IsFailed(resource metav1.Object) bool {
 }
 
 func (prf *PipelineRunFuncs) GetDefaultLabelKey() string {
-	return helper.LabelPipelineName
+	return config.LabelPipelineName
 }
 
 func (prf *PipelineRunFuncs) GetTTLSecondsAfterFinished(namespace, pipelineName string) *int32 {
-	return helper.PrunerConfigStore.GetPipelineTTLSecondsAfterFinished(namespace, pipelineName)
+	return config.PrunerConfigStore.GetPipelineTTLSecondsAfterFinished(namespace, pipelineName)
 }
 
 func (prf *PipelineRunFuncs) GetSuccessHistoryLimitCount(namespace, name string) *int32 {
-	return helper.PrunerConfigStore.GetPipelineSuccessHistoryLimitCount(namespace, name)
+	return config.PrunerConfigStore.GetPipelineSuccessHistoryLimitCount(namespace, name)
 }
 
 func (prf *PipelineRunFuncs) GetFailedHistoryLimitCount(namespace, name string) *int32 {
-	return helper.PrunerConfigStore.GetPipelineFailedHistoryLimitCount(namespace, name)
+	return config.PrunerConfigStore.GetPipelineFailedHistoryLimitCount(namespace, name)
 }
 
-func (prf *PipelineRunFuncs) GetEnforcedConfigLevel(namespace, name string) tektonprunerv1alpha1.EnforcedConfigLevel {
-	return helper.PrunerConfigStore.GetPipelineEnforcedConfigLevel(namespace, name)
+func (prf *PipelineRunFuncs) GetEnforcedConfigLevel(namespace, name string) config.EnforcedConfigLevel {
+	return config.PrunerConfigStore.GetPipelineEnforcedConfigLevel(namespace, name)
 }
