@@ -25,9 +25,8 @@ jobs:
       GOPATH: ${{ github.workspace }}
       GO111MODULE: on
       GOFLAGS: -ldflags=-s -ldflags=-w
-      KO_DOCKER_REPO: registry.local:5000/knative
+      KO_DOCKER_REPO: registry.local:5000
       KOCACHE: ~/ko
-      SIGSTORE_SCAFFOLDING_RELEASE_VERSION: "v0.7.12"
       TEKTON_PIPELINES_RELEASE: "https://storage.googleapis.com/tekton-releases/pipeline/previous/${{ inputs.pipelines-release }}/release.yaml"
       # Note that we do not include the v prefix here so we can use it in all
       # the places this is used.
@@ -53,6 +52,18 @@ jobs:
       uses: actions/checkout@6d193bf28034eafb982f37bd894289fe649468fc # v4.1.7
       with:
         path: ./src/github.com/openshift-pipelines/tektoncd-pruner
+    
+    - name: Add registry.local to /etc/hosts
+      run: echo "127.0.0.1 registry.local" | sudo tee -a /etc/hosts
+
+    - name: Start local registry container
+      run: |
+        docker run -d -p 5000:5000 --restart=always --name kind-registry registry:2
+
+    - name: Create kind cluster
+      working-directory: ./src/github.com/openshift-pipelines/tektoncd-pruner
+      run: |
+        chmod u+x ./hack/dev/kind/install.sh
 
     - name: Install Tekton pipelines
       run: |
