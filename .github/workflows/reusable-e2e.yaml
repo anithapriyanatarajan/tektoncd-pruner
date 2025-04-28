@@ -55,10 +55,12 @@ jobs:
 
     - name: Create kind cluster
       run: |  
-        kind create cluster --verbosity 3 --config "$(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner/test/kind-cluster.yaml" --name=tekton-pruner --wait=60s
+        kind create cluster --verbosity 3 --config "$(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner/test/kind-cluster.yaml" --wait=60s
         kind export kubeconfig
+        # Set the registry to be the local registry.
+        kind get kubeconfig > ~/.kube/config
         # Wait for the cluster to be ready.
-        while ! kubectl get nodes
+        while ! kubectl get nodes 
         do
           echo "waiting for kind cluster to be ready"
           sleep 2
