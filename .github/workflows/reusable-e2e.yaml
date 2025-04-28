@@ -52,18 +52,23 @@ jobs:
       uses: actions/checkout@6d193bf28034eafb982f37bd894289fe649468fc # v4.1.7
       with:
         path: ./src/github.com/openshift-pipelines/tektoncd-pruner
-    
-    - name: Add registry.local to /etc/hosts
-      run: echo "127.0.0.1 registry.local" | sudo tee -a /etc/hosts
-
-    - name: Start local registry container
-      run: |
-        docker run -d -p 5000:5000 --restart=always --name kind-registry registry:2
 
     - name: Create kind cluster
       working-directory: ./src/github.com/openshift-pipelines/tektoncd-pruner
       run: |
-        chmod u+x ./hack/dev/kind/install.sh
+        ./test/kind-install.sh ${{ inputs.k8s-version }} registry.local:5000
+        # Wait for the cluster to be ready.
+        while ! kubectl get nodes
+        do
+          echo "waiting for kind cluster to be ready"
+          sleep 2
+        done
+        # Wait for the registry to be ready.
+        while ! curl -s http://localhost:5000/v2/_catalog
+        do
+          echo "waiting for registry to be ready"
+          sleep 2
+        done
 
     - name: Install Tekton pipelines
       run: |
