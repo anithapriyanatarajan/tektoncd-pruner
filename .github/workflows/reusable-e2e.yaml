@@ -55,10 +55,8 @@ jobs:
 
     - name: Create kind cluster
       run: |  
-        echo $pwd
-        ls $(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner
-        chmod u+x $(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner/test/kind-install.sh
-        $(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner/test/kind-install.sh
+        kind create cluster --verbosity 3 --config "$(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner/test/kind-cluster.yaml" --name=tekton-pruner --wait=60s
+        kind export kubeconfig
         # Wait for the cluster to be ready.
         while ! kubectl get nodes
         do
