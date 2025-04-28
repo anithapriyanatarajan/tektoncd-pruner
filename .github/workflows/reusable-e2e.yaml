@@ -58,7 +58,7 @@ jobs:
         echo $pwd
         ls $(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner
         chmod u+x $(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner/test/kind-install.sh
-        test/kind-install.sh ${{ inputs.k8s-version }} registry.local:5000
+        $(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner/test/kind-install.sh
         # Wait for the cluster to be ready.
         while ! kubectl get nodes
         do
