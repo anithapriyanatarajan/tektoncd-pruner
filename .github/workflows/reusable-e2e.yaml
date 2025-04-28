@@ -54,10 +54,10 @@ jobs:
         path: ./src/github.com/openshift-pipelines/tektoncd-pruner
 
     - name: Create kind cluster
-      run: |
+      run: |  
         echo $pwd
-        ls
-        chmod u+x $(pwd)/test/kind-install.sh
+        ls $(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner
+        chmod u+x $(pwd)/src/github.com/openshift-pipelines/tektoncd-pruner/test/kind-install.sh
         test/kind-install.sh ${{ inputs.k8s-version }} registry.local:5000
         # Wait for the cluster to be ready.
         while ! kubectl get nodes
