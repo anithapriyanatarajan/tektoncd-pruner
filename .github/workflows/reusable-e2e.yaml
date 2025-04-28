@@ -55,8 +55,9 @@ jobs:
 
     - name: Create kind cluster
       run: |
-        pwd
-        chmod u+x ./test/kind-install.sh
+        echo $pwd
+        ls
+        chmod u+x $(pwd)/test/kind-install.sh
         test/kind-install.sh ${{ inputs.k8s-version }} registry.local:5000
         # Wait for the cluster to be ready.
         while ! kubectl get nodes
