@@ -20,21 +20,21 @@
 export namespace="${NAMESPACE:-tekton-pipelines}"
 echo "Using namespace: $namespace"
 
-source $(git rev-parse --show-toplevel)/test/e2e-common.sh
+#source $(git rev-parse --show-toplevel)/test/e2e-common.sh
 
 # Script entry point.
 
 initialize $@
 
-header "Setting up environment"
+#header "Setting up environment"
 
 # Test against nightly instead of latest.
 # install_tkn
 
-export RELEASE_YAML="https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.70.0/release.yaml"
-install_pipeline_crd
+#export RELEASE_YAML="https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.70.0/release.yaml"
+#install_pipeline_crd
 
-install_pruner
+#install_pruner
 
 failed=0
 

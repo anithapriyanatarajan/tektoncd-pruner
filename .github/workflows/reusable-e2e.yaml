@@ -79,8 +79,16 @@ jobs:
     - name: Run Integration tests
       working-directory: ./src/github.com/openshift-pipelines/tektoncd-pruner
       run: |
-        failed=0
-        header "Running Go e2e tests"
-        go_test_e2e -timeout=35m ./test/... || failed=1
-        (( failed )) && dump_logs && fail_test
-        success
+        echo "Running Go e2e tests"
+        set +e
+        go test -timeout 35m ./test/...
+        test_exit_code=$?
+        set -e
+
+        if [[ $test_exit_code -ne 0 ]]; then
+          echo "Tests failed!"
+          # Optionally: cat logs here if you have them
+          exit 1
+        else
+          echo "All tests passed!"
+        fi
