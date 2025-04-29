@@ -12,111 +12,115 @@ cascade:
 
 # Tekton Pruner
 
-TO BE UPDATED [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/6408/badge)](https://bestpractices.coreinfrastructure.org/projects/6408)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/tektoncd/pruner/blob/main/LICENSE)
 
-Event based pruning of Tekton resources
+Tekton Pruner is a Kubernetes controller that automatically manages the lifecycle of Tekton resources by cleaning up completed PipelineRuns and TaskRuns based on configurable policies.
 
-<p align="center">
-<img src="tekton_chains-color.png" alt="Tekton Pruner logo"></img>
-</p>
+## Overview
 
-## Getting Started
-
-Tekton Pruner is a controller that continuously monitors a predefined configuration in a ConfigMap and
-removes PipelineRuns and TaskRuns according to the specified settings.
-
-By default, the Pruner controller watches the ConfigMap tekton-pruner-default-spec. Additionally, 
-it includes two other controllers that monitor every PipelineRun and TaskRun event in the cluster, 
-continuously reconciling to remove them based on the ConfigMap settings.
+Tekton Pruner provides event-driven and configuration-based cleanup of Tekton resources. It consists of three controllers:
+- Main Pruner controller that periodically processes cleanup based on ConfigMap settings
+- PipelineRun controller that handles PipelineRun events
+- TaskRun controller that handles standalone TaskRun events
 
 <p align="center">
 <img src="docs/images/pruner_functional_abstract.png" alt="Tekton Pruner overview"></img>
 </p>
 
-Current Features:
+## Features
 
-1. Ability to set a cluster-wide pruning configuration that applies to all namespaces in the cluster.
+### 1. Time-based Pruning (TTL)
+- Automatically delete completed PipelineRuns and TaskRuns after a specified time period
+- Configure using `ttlSecondsAfterFinished` setting
 
-   Pruning Configuration Variations (Prioritized from Highest to Lowest):
+### 2. History-based Pruning
+- Maintain a fixed number of PipelineRuns/TaskRuns based on their status
+- Configure using:
+  - `successfulHistoryLimit`: Number of successful runs to retain
+  - `failedHistoryLimit`: Number of failed runs to retain 
+  - `historyLimit`: Total number of runs to retain regardless of status
 
-   - Pruning PipelineRuns and TaskRuns based on TTL (time-to-live) in seconds.`ttlSecondsAfterFinished`
-   - Defining the number of successful PipelineRuns/TaskRuns to retain.`successfulHistoryLimit`
-   - Defining the number of failed PipelineRuns/TaskRuns to retain.`failedHistoryLimit`
-   - Setting a fixed number of PipelineRuns/TaskRuns to retain, regardless of status.`historyLimit`
+### 3. Flexible Configuration Hierarchy
+Configurations can be applied at different levels (from highest to lowest priority):
+1. Resource Level: Specific to individual PipelineRuns/TaskRuns
+2. Namespace Level: Applied to all resources in a namespace
+3. Global Level: Cluster-wide defaults
 
-   sample configMap depiciting the above settings that apply to all namespaces in the cluster
+## Installation
 
-   ```yaml
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-        name: tekton-pruner-default-spec
-        namespace: tekton-pipelines
-    data:
-        global-config: |
-            ttlSecondsAfterFinished: 600 # 5 minutes
-            successfulHistoryLimit: 3 
-            failedHistoryLimit: 3
-            historyLimit: 5  
-   ```
+Prerequisites:
+- Kubernetes cluster
+- [Tekton Pipelines](https://github.com/tektoncd/pipeline/blob/main/docs/install.md) installed
 
-Work In Progress Features:
-
-2. Ability to set pruning configuration specific to a Namespace that can overrides the cluster-wide settings
-
-3. Ability to set pruning configuration specific to PipelineRuns/TaskRuns that can be identified either by 
-      - Parent Pipleline/Task Name 
-      - Matching Labels
-      - Matching Annotations
-   This configurations override the Namespace specific configuration
-
-
-### Installation **TO BE UPDATED**
-
-Prerequisite: you'll need
-[Tekton Pipelines](https://github.com/tektoncd/pipeline/blob/main/docs/install.md) installed on your cluster before you install Pruner.
-
-To install the latest version of Pruner to your Kubernetes cluster, run:
-
-```shell
-kubectl apply --filename ??release.yaml
+```bash
+kubectl apply -f https://raw.githubusercontent.com/openshift-pipelines/tektoncd-pruner/main/release.yaml
 ```
 
-To install a specific version of Chains, run:
-
-```shell
-kubectl apply -f ??release.yaml
+Verify installation:
+```bash
+kubectl get pods -n tekton-pipelines
 ```
 
-To verify that installation was successful, wait until all Pods have Status
-`Running`:
+Look for the `tekton-pruner-controller` pod running.
 
-```shell
-kubectl get po -n tekton-pipelines --watch
+## Configuration
+
+The pruner is configured through a ConfigMap in the `tekton-pipelines` namespace. Here's a basic example:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tekton-pruner-default-spec
+  namespace: tekton-pipelines
+data:
+  global-config: |
+    enforcedConfigLevel: global
+    ttlSecondsAfterFinished: 300    # 5 minutes
+    successfulHistoryLimit: 3        # Keep last 3 successful runs
+    failedHistoryLimit: 3           # Keep last 3 failed runs
+    historyLimit: 10                # Keep last 10 runs total
 ```
 
+### Namespace-specific Configuration
+
+Override global settings for specific namespaces:
+
+```yaml
+data:
+  global-config: |
+    enforcedConfigLevel: namespace
+    ttlSecondsAfterFinished: 300
+    namespaces:
+      my-namespace:
+        ttlSecondsAfterFinished: 60  # Override for specific namespace
 ```
-NAME                                          READY   STATUS      RESTARTS   AGE
-tekton-pruner-controller-5756bc7cb9-lblnx      1/1     Running      0        10s
+
+### Resource-specific Configuration
+
+Configure pruning based on labels or annotations:
+
+```yaml
+data:
+  global-config: |
+    enforcedConfigLevel: resource
+    namespaces:
+      my-namespace:
+        pipelineRuns:
+          - name: my-pipeline
+            ttlSecondsAfterFinished: 120
+          - selector:
+              matchLabels:
+                environment: production
+            ttlSecondsAfterFinished: 600
 ```
 
-### Setup **WIP**
+## Contributing
 
-To view and edit the default configuartions:
+- See [DEVELOPMENT.md](DEVELOPMENT.md) for development setup
+- Submit issues and pull requests
+- Follow coding standards and test coverage requirements
 
-- [Set up any additional configuration](docs/config.md)
+## License
 
-## Tutorials **WIP**
-
-To get started with pruner, try out our
-[getting started tutorial](docs/tutorials/getting-started-tutorial.md).
-
-## Want to contribute - TO BE UPDATED
-
-We are so excited to have you!
-
-- See [CONTRIBUTING.md](CONTRIBUTING.md) for an overview of our processes
-- See [DEVELOPMENT.md](DEVELOPMENT.md) for how to get started
-- See [ROADMAP.md](ROADMAP.md) for the current roadmap Check out our good first
-  issues and our help wanted issues to get started!
-- See [releases.md](releases.md) for our release cadence and processes
+Apache License 2.0 - See [LICENSE](LICENSE) for details

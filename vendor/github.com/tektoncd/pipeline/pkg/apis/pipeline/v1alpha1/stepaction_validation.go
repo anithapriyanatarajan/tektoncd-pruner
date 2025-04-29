@@ -15,6 +15,7 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/tektoncd/pipeline/pkg/apis/config"
@@ -28,10 +29,8 @@ import (
 	"knative.dev/pkg/webhook/resourcesemantics"
 )
 
-var (
-	_ apis.Validatable              = (*StepAction)(nil)
-	_ resourcesemantics.VerbLimited = (*StepAction)(nil)
-)
+var _ apis.Validatable = (*StepAction)(nil)
+var _ resourcesemantics.VerbLimited = (*StepAction)(nil)
 
 // SupportedVerbs returns the operations that validation should be called for
 func (s *StepAction) SupportedVerbs() []admissionregistrationv1.OperationType {
@@ -63,7 +62,6 @@ func (ss *StepActionSpec) Validate(ctx context.Context) (errs *apis.FieldError) 
 		if strings.HasPrefix(cleaned, "#!win") {
 			errs = errs.Also(config.ValidateEnabledAPIFields(ctx, "windows script support", config.AlphaAPIFields).ViaField("script"))
 		}
-		errs = errs.Also(validateNoParamSubstitutionsInScript(ss.Script))
 	}
 	errs = errs.Also(validateUsageOfDeclaredParameters(ctx, *ss))
 	errs = errs.Also(v1.ValidateParameterTypes(ctx, ss.Params).ViaField("params"))
@@ -72,18 +70,6 @@ func (ss *StepActionSpec) Validate(ctx context.Context) (errs *apis.FieldError) 
 	errs = errs.Also(v1.ValidateStepResults(ctx, ss.Results).ViaField("results"))
 	errs = errs.Also(validateVolumeMounts(ss.VolumeMounts, ss.Params).ViaField("volumeMounts"))
 	return errs
-}
-
-// validateNoParamSubstitutionsInScript validates that param substitutions are not invoked in the script
-func validateNoParamSubstitutionsInScript(script string) *apis.FieldError {
-	_, present, errString := substitution.ExtractVariablesFromString(script, "params")
-	if errString != "" || present {
-		return &apis.FieldError{
-			Message: "param substitution in scripts is not allowed.",
-			Paths:   []string{"script"},
-		}
-	}
-	return nil
 }
 
 // validateUsageOfDeclaredParameters validates that all parameters referenced in the Task are declared by the Task.
@@ -145,7 +131,7 @@ func validateObjectUsage(ctx context.Context, sas StepActionSpec, params v1.Para
 		}
 
 		// check if the object's key names are referenced correctly i.e. param.objectParam.key1
-		errs = errs.Also(validateStepActionVariables(ctx, sas, "params\\."+p.Name, objectKeys))
+		errs = errs.Also(validateStepActionVariables(ctx, sas, fmt.Sprintf("params\\.%s", p.Name), objectKeys))
 	}
 
 	return errs.Also(validateStepActionObjectUsageAsWhole(sas, "params", objectParameterNames))

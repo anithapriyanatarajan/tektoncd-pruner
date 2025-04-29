@@ -98,8 +98,6 @@ func (we *WhenExpression) GetVarSubstitutionExpressions() ([]string, bool) {
 // All of them need to evaluate to True for a guarded Task to be executed.
 type WhenExpressions []WhenExpression
 
-type StepWhenExpressions = WhenExpressions
-
 // AllowsExecution evaluates an Input's relationship to an array of Values, based on the Operator,
 // to determine whether all the When Expressions are True. If they are all True, the guarded Task is
 // executed, otherwise it is skipped.
@@ -107,7 +105,10 @@ type StepWhenExpressions = WhenExpressions
 // if the Task should be skipped.
 func (wes WhenExpressions) AllowsExecution(evaluatedCEL map[string]bool) bool {
 	for _, we := range wes {
-		if !we.isTrue() || (we.CEL != "" && !evaluatedCEL[we.CEL]) {
+		if we.CEL != "" {
+			return evaluatedCEL[we.CEL]
+		}
+		if !we.isTrue() {
 			return false
 		}
 	}
