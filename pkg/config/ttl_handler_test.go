@@ -102,19 +102,19 @@ func TestNewTTLHandlerFunc(t *testing.T) {
 	fakeClock := clocktest.NewFakeClock(time.Now())
 
 	tests := []struct {
-		name        string
-		resourceFn  TTLResourceFuncs
+		name       string
+		resourceFn TTLResourceFuncs
 		wantErr    bool
 		errMessage string
 	}{
 		{
 			name:       "Valid constructor",
 			resourceFn: mockFuncs,
-			wantErr:   false,
+			wantErr:    false,
 		},
 		{
-			name:        "Nil resource functions",
-			resourceFn:  nil,
+			name:       "Nil resource functions",
+			resourceFn: nil,
 			wantErr:    true,
 			errMessage: "resourceFunc interface can not be nil",
 		},
@@ -147,8 +147,8 @@ func TestHandleProcessEvent(t *testing.T) {
 	handler, _ := NewTTLHandler(fakeClock, mockFuncs)
 
 	tests := []struct {
-		name         string
-		resource     *ttlMockResource
+		name        string
+		resource    *ttlMockResource
 		wantErr     bool
 		wantDeleted bool
 	}{
