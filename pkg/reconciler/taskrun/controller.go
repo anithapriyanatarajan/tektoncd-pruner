@@ -28,21 +28,25 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 
 	logger := logging.FromContext(ctx)
 
+	// Create the function interfaces first
 	taskRunFuncs := &TrFuncs{
 		client: pipelineclient.Get(ctx),
 	}
+
+	// Create TTL handler with the functions
 	ttlHandler, err := config.NewTTLHandler(clock.RealClock{}, taskRunFuncs)
 	if err != nil {
 		logger.Fatal("error on getting ttl handler", zap.Error(err))
 	}
 
+	// Create history limiter with the functions
 	historyLimiter, err := config.NewHistoryLimiter(taskRunFuncs)
 	if err != nil {
 		logger.Fatal("error on getting history limiter", zap.Error(err))
 	}
 
+	// Create reconciler with all components
 	r := &Reconciler{
-		// The client will be needed to create/delete Pods via the API.
 		kubeclient:     kubeclient.Get(ctx),
 		ttlHandler:     ttlHandler,
 		historyLimiter: historyLimiter,

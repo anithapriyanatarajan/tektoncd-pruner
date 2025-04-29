@@ -111,7 +111,7 @@ func (opt *constantFoldingOptimizer) Optimize(ctx *OptimizerContext, a *ast.AST)
 			ctx.ReportErrorAtID(root.ID(), "constant-folding evaluation failed: %v", err.Error())
 			return
 		}
-		ctx.UpdateExpr(e, adapted)
+		e.SetKindCase(adapted)
 	}))
 
 	return a
@@ -134,8 +134,10 @@ func tryFold(ctx *OptimizerContext, a *ast.AST, expr ast.Expr) error {
 	if err != nil {
 		return err
 	}
+	// Clear any macro metadata associated with the fold.
+	a.SourceInfo().ClearMacroCall(expr.ID())
 	// Update the fold expression to be a literal.
-	ctx.UpdateExpr(expr, ctx.NewLiteral(out))
+	expr.SetKindCase(ctx.NewLiteral(out))
 	return nil
 }
 
@@ -157,15 +159,15 @@ func maybePruneBranches(ctx *OptimizerContext, expr ast.NavigableExpr) bool {
 			return false
 		}
 		if cond.AsLiteral() == types.True {
-			ctx.UpdateExpr(expr, truthy)
+			expr.SetKindCase(truthy)
 		} else {
-			ctx.UpdateExpr(expr, falsy)
+			expr.SetKindCase(falsy)
 		}
 		return true
 	case operators.In:
 		haystack := args[1]
 		if haystack.Kind() == ast.ListKind && haystack.AsList().Size() == 0 {
-			ctx.UpdateExpr(expr, ctx.NewLiteral(types.False))
+			expr.SetKindCase(ctx.NewLiteral(types.False))
 			return true
 		}
 		needle := args[0]
@@ -174,7 +176,7 @@ func maybePruneBranches(ctx *OptimizerContext, expr ast.NavigableExpr) bool {
 			list := haystack.AsList()
 			for _, e := range list.Elements() {
 				if e.Kind() == ast.LiteralKind && e.AsLiteral().Equal(needleValue) == types.True {
-					ctx.UpdateExpr(expr, ctx.NewLiteral(types.True))
+					expr.SetKindCase(ctx.NewLiteral(types.True))
 					return true
 				}
 			}
@@ -200,20 +202,20 @@ func maybeShortcircuitLogic(ctx *OptimizerContext, function string, args []ast.E
 			continue
 		}
 		if arg.AsLiteral() == shortcircuit {
-			ctx.UpdateExpr(expr, arg)
+			expr.SetKindCase(arg)
 			return true
 		}
 	}
 	if len(newArgs) == 0 {
 		newArgs = append(newArgs, args[0])
-		ctx.UpdateExpr(expr, newArgs[0])
+		expr.SetKindCase(newArgs[0])
 		return true
 	}
 	if len(newArgs) == 1 {
-		ctx.UpdateExpr(expr, newArgs[0])
+		expr.SetKindCase(newArgs[0])
 		return true
 	}
-	ctx.UpdateExpr(expr, ctx.NewCall(function, newArgs...))
+	expr.SetKindCase(ctx.NewCall(function, newArgs...))
 	return true
 }
 
@@ -268,10 +270,10 @@ func pruneOptionalListElements(ctx *OptimizerContext, e ast.Expr) {
 			newOptIndex-- // Skipping causes the list to get smaller.
 			continue
 		}
-		ctx.UpdateExpr(e, ctx.NewLiteral(optElemVal.GetValue()))
+		e.SetKindCase(ctx.NewLiteral(optElemVal.GetValue()))
 		updatedElems = append(updatedElems, e)
 	}
-	ctx.UpdateExpr(e, ctx.NewList(updatedElems, updatedIndices))
+	e.SetKindCase(ctx.NewList(updatedElems, updatedIndices))
 }
 
 func pruneOptionalMapEntries(ctx *OptimizerContext, e ast.Expr) {
@@ -301,7 +303,7 @@ func pruneOptionalMapEntries(ctx *OptimizerContext, e ast.Expr) {
 			if err != nil {
 				ctx.ReportErrorAtID(val.ID(), "invalid map value literal %v: %v", optElemVal, err)
 			}
-			ctx.UpdateExpr(val, undoOptVal)
+			val.SetKindCase(undoOptVal)
 			updatedEntries = append(updatedEntries, e)
 			continue
 		}
@@ -309,12 +311,12 @@ func pruneOptionalMapEntries(ctx *OptimizerContext, e ast.Expr) {
 		if !optElemVal.HasValue() {
 			continue
 		}
-		ctx.UpdateExpr(val, ctx.NewLiteral(optElemVal.GetValue()))
+		val.SetKindCase(ctx.NewLiteral(optElemVal.GetValue()))
 		updatedEntry := ctx.NewMapEntry(key, val, false)
 		updatedEntries = append(updatedEntries, updatedEntry)
 	}
 	if modified {
-		ctx.UpdateExpr(e, ctx.NewMap(updatedEntries))
+		e.SetKindCase(ctx.NewMap(updatedEntries))
 	}
 }
 
@@ -339,12 +341,12 @@ func pruneOptionalStructFields(ctx *OptimizerContext, e ast.Expr) {
 		if !optElemVal.HasValue() {
 			continue
 		}
-		ctx.UpdateExpr(val, ctx.NewLiteral(optElemVal.GetValue()))
+		val.SetKindCase(ctx.NewLiteral(optElemVal.GetValue()))
 		updatedField := ctx.NewStructField(field.Name(), val, false)
 		updatedFields = append(updatedFields, updatedField)
 	}
 	if modified {
-		ctx.UpdateExpr(e, ctx.NewStruct(s.TypeName(), updatedFields))
+		e.SetKindCase(ctx.NewStruct(s.TypeName(), updatedFields))
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -30,14 +29,14 @@ import (
 type symbol struct {
 	pkg  string // name of the symbols's package
 	name string // declared name
-	kind string // T, C, V, or F, follwed by D if deprecated
+	kind string // T, C, V, or F
 	sig  string // signature information, for F
 }
 
 // find the symbols for the best directories
 func getSymbols(cd Abspath, dirs map[string][]*directory) {
 	var g errgroup.Group
-	g.SetLimit(max(2, runtime.GOMAXPROCS(0)/2))
+	g.SetLimit(-1) // maybe throttle this some day
 	for _, vv := range dirs {
 		// throttling some day?
 		d := vv[0]
@@ -112,7 +111,7 @@ func getFileExports(f *ast.File) []symbol {
 				// print struct tags. So for this to happen the type of a formal parameter
 				// has to be a explict struct, e.g. foo(x struct{a int "$"}) and ExprString
 				// would have to show the struct tag. Even testing for this case seems
-				// a waste of effort, but let's remember the possibility
+				// a waste of effort, but let's not ignore such pathologies
 				if strings.Contains(tp, "$") {
 					continue
 				}
