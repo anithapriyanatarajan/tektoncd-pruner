@@ -15,12 +15,12 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"knative.dev/pkg/apis"
-	"knative.dev/pkg/system"
 )
 
 const (
 	prunerConfigName = "tekton-pruner-default-spec"
-	testNamespace    = "tekton-pruner-test"
+	prunerNamespace  = "tekton-pipelines"
+	testNamespace    = "pruner-test" //avoid creating test namespaces prefixed with tekton- as they are reserved for tekton components"
 	waitForDeletion  = 2 * time.Minute
 	pollingInterval  = 5 * time.Second
 )
@@ -51,26 +51,61 @@ func TestPrunerE2E(t *testing.T) {
 	}
 
 	// Run subtests
+
+	// TestTTLBasedPruning
+	// Tests the time-based pruning of TaskRuns
+	// - Configures a TTL of 60 seconds after completion
+	// - Creates a TaskRun that completes successfully
+	// - Verifies that TaskRuns are deleted after the TTL period
 	t.Run("TestTTLBasedPruning", func(t *testing.T) {
 		testTTLBasedPruning(ctx, t, kubeClient, tektonClient)
 	})
 
+	// TestPipelineRunTTLBasedPruning
+	// Tests the time-based pruning of PipelineRuns
+	// - Configures a TTL of 60 seconds after completion
+	// - Creates a PipelineRun that completes successfully
+	// - Verifies that PipelineRuns are deleted after the TTL period
 	t.Run("TestPipelineRunTTLBasedPruning", func(t *testing.T) {
 		testPipelineRunTTLBasedPruning(ctx, t, kubeClient, tektonClient)
 	})
 
+	// TestHistoryBasedPruning
+	// Tests history-based pruning of TaskRuns
+	// - Configures limits: keep 2 successful and 1 failed TaskRuns
+	// - Creates multiple TaskRuns (3 successful, 2 failed)
+	// - Verifies that only the configured number of TaskRuns are retained
+	// - Checks that older TaskRuns are pruned while keeping the most recent ones
 	t.Run("TestHistoryBasedPruning", func(t *testing.T) {
 		testHistoryBasedPruning(ctx, t, kubeClient, tektonClient)
 	})
 
+	// TestPipelineRunHistoryBasedPruning
+	// Tests history-based pruning of PipelineRuns
+	// - Configures limits: keep 2 successful and 1 failed PipelineRuns
+	// - Creates multiple PipelineRuns (3 successful, 2 failed)
+	// - Verifies that only the configured number of PipelineRuns are retained
+	// - Checks that older PipelineRuns are pruned while keeping the most recent ones
 	t.Run("TestPipelineRunHistoryBasedPruning", func(t *testing.T) {
 		testPipelineRunHistoryBasedPruning(ctx, t, kubeClient, tektonClient)
 	})
 
+	// TestConfigurationOverrides
+	// Tests namespace-specific configuration overrides for TaskRuns
+	// - Sets global TTL to 300 seconds but overrides to 60 seconds for test namespace
+	// - Creates TaskRuns in different namespaces
+	// - Verifies that TaskRuns in the test namespace are deleted faster
+	// - Confirms that TaskRuns in other namespaces follow the global TTL
 	t.Run("TestConfigurationOverrides", func(t *testing.T) {
 		testConfigurationOverrides(ctx, t, kubeClient, tektonClient)
 	})
 
+	// TestPipelineRunConfigurationOverrides
+	// Tests namespace-specific configuration overrides for PipelineRuns
+	// - Sets global TTL to 300 seconds but overrides to 60 seconds for test namespace
+	// - Creates PipelineRuns in different namespaces
+	// - Verifies that PipelineRuns in the test namespace are deleted faster
+	// - Confirms that PipelineRuns in other namespaces follow the global TTL
 	t.Run("TestPipelineRunConfigurationOverrides", func(t *testing.T) {
 		testPipelineRunConfigurationOverrides(ctx, t, kubeClient, tektonClient)
 	})
@@ -81,22 +116,18 @@ func testTTLBasedPruning(ctx context.Context, t *testing.T, kubeClient *kubernet
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      prunerConfigName,
-			Namespace: system.Namespace(),
+			Namespace: prunerNamespace,
 		},
 		Data: map[string]string{
-			"periodicCleanupEnabled":         "true",
-			"periodicCleanupIntervalSeconds": "60",
-			"global-config": `
-				enforcedConfigLevel: global
-				ttlSecondsAfterFinished: 60
-			`,
+			"global-config": `enforcedConfigLevel: global
+ttlSecondsAfterFinished: 60`,
 		},
 	}
 
 	// Update or create config
-	_, err := kubeClient.CoreV1().ConfigMaps(system.Namespace()).Update(ctx, configMap, metav1.UpdateOptions{})
+	_, err := kubeClient.CoreV1().ConfigMaps(prunerNamespace).Update(ctx, configMap, metav1.UpdateOptions{})
 	if errors.IsNotFound(err) {
-		_, err = kubeClient.CoreV1().ConfigMaps(system.Namespace()).Create(ctx, configMap, metav1.CreateOptions{})
+		_, err = kubeClient.CoreV1().ConfigMaps(prunerNamespace).Create(ctx, configMap, metav1.CreateOptions{})
 	}
 	if err != nil {
 		t.Fatalf("Failed to configure pruner: %v", err)
@@ -135,22 +166,18 @@ func testPipelineRunTTLBasedPruning(ctx context.Context, t *testing.T, kubeClien
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      prunerConfigName,
-			Namespace: system.Namespace(),
+			Namespace: prunerNamespace,
 		},
 		Data: map[string]string{
-			"periodicCleanupEnabled":         "true",
-			"periodicCleanupIntervalSeconds": "60",
-			"global-config": `
-				enforcedConfigLevel: global
-				ttlSecondsAfterFinished: 60
-			`,
+			"global-config": `enforcedConfigLevel: global
+ttlSecondsAfterFinished: 60`,
 		},
 	}
 
 	// Update or create config
-	_, err := kubeClient.CoreV1().ConfigMaps(system.Namespace()).Update(ctx, configMap, metav1.UpdateOptions{})
+	_, err := kubeClient.CoreV1().ConfigMaps(prunerNamespace).Update(ctx, configMap, metav1.UpdateOptions{})
 	if errors.IsNotFound(err) {
-		_, err = kubeClient.CoreV1().ConfigMaps(system.Namespace()).Create(ctx, configMap, metav1.CreateOptions{})
+		_, err = kubeClient.CoreV1().ConfigMaps(prunerNamespace).Create(ctx, configMap, metav1.CreateOptions{})
 	}
 	if err != nil {
 		t.Fatalf("Failed to configure pruner: %v", err)
@@ -196,20 +223,16 @@ func testHistoryBasedPruning(ctx context.Context, t *testing.T, kubeClient *kube
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      prunerConfigName,
-			Namespace: system.Namespace(),
+			Namespace: prunerNamespace,
 		},
 		Data: map[string]string{
-			"periodicCleanupEnabled":         "true",
-			"periodicCleanupIntervalSeconds": "60",
-			"global-config": `
-				enforcedConfigLevel: global
-				successfulHistoryLimit: 2
-				failedHistoryLimit: 1
-			`,
+			"global-config": `enforcedConfigLevel: global
+successfulHistoryLimit: 2
+failedHistoryLimit: 1`,
 		},
 	}
 
-	_, err := kubeClient.CoreV1().ConfigMaps(system.Namespace()).Update(ctx, configMap, metav1.UpdateOptions{})
+	_, err := kubeClient.CoreV1().ConfigMaps(prunerNamespace).Update(ctx, configMap, metav1.UpdateOptions{})
 	if err != nil {
 		t.Fatalf("Failed to configure history limits: %v", err)
 	}
@@ -302,20 +325,16 @@ func testPipelineRunHistoryBasedPruning(ctx context.Context, t *testing.T, kubeC
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      prunerConfigName,
-			Namespace: system.Namespace(),
+			Namespace: prunerNamespace,
 		},
 		Data: map[string]string{
-			"periodicCleanupEnabled":         "true",
-			"periodicCleanupIntervalSeconds": "60",
-			"global-config": `
-				enforcedConfigLevel: global
-				successfulHistoryLimit: 2
-				failedHistoryLimit: 1
-			`,
+			"global-config": `enforcedConfigLevel: global
+successfulHistoryLimit: 2
+failedHistoryLimit: 1`,
 		},
 	}
 
-	_, err := kubeClient.CoreV1().ConfigMaps(system.Namespace()).Update(ctx, configMap, metav1.UpdateOptions{})
+	_, err := kubeClient.CoreV1().ConfigMaps(prunerNamespace).Update(ctx, configMap, metav1.UpdateOptions{})
 	if err != nil {
 		t.Fatalf("Failed to configure history limits: %v", err)
 	}
@@ -422,22 +441,18 @@ func testConfigurationOverrides(ctx context.Context, t *testing.T, kubeClient *k
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      prunerConfigName,
-			Namespace: system.Namespace(),
+			Namespace: prunerNamespace,
 		},
 		Data: map[string]string{
-			"periodicCleanupEnabled":         "true",
-			"periodicCleanupIntervalSeconds": "60",
-			"global-config": `
-				enforcedConfigLevel: namespace
-				ttlSecondsAfterFinished: 300
-				namespaces:
-				  tekton-pruner-test:
-				    ttlSecondsAfterFinished: 60
-			`,
+			"global-config": `enforcedConfigLevel: namespace
+ttlSecondsAfterFinished: 300
+namespaces:
+  pruner-test:
+    ttlSecondsAfterFinished: 60`,
 		},
 	}
 
-	_, err := kubeClient.CoreV1().ConfigMaps(system.Namespace()).Update(ctx, configMap, metav1.UpdateOptions{})
+	_, err := kubeClient.CoreV1().ConfigMaps(prunerNamespace).Update(ctx, configMap, metav1.UpdateOptions{})
 	if err != nil {
 		t.Fatalf("Failed to configure namespace override: %v", err)
 	}
@@ -483,22 +498,18 @@ func testPipelineRunConfigurationOverrides(ctx context.Context, t *testing.T, ku
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      prunerConfigName,
-			Namespace: system.Namespace(),
+			Namespace: prunerNamespace,
 		},
 		Data: map[string]string{
-			"periodicCleanupEnabled":         "true",
-			"periodicCleanupIntervalSeconds": "60",
-			"global-config": `
-				enforcedConfigLevel: namespace
-				ttlSecondsAfterFinished: 300
-				namespaces:
-				  tekton-pruner-test:
-				    ttlSecondsAfterFinished: 60
-			`,
+			"global-config": `enforcedConfigLevel: namespace
+ttlSecondsAfterFinished: 300
+namespaces:
+  pruner-test:
+    ttlSecondsAfterFinished: 60`,
 		},
 	}
 
-	_, err := kubeClient.CoreV1().ConfigMaps(system.Namespace()).Update(ctx, configMap, metav1.UpdateOptions{})
+	_, err := kubeClient.CoreV1().ConfigMaps(prunerNamespace).Update(ctx, configMap, metav1.UpdateOptions{})
 	if err != nil {
 		t.Fatalf("Failed to configure namespace override: %v", err)
 	}

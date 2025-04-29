@@ -87,7 +87,6 @@ jobs:
 
         if [[ $test_exit_code -ne 0 ]]; then
           echo "Tests failed!"
-          # Optionally: cat logs here if you have them
           exit 1
         else
           echo "All tests passed!"
