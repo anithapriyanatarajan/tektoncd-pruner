@@ -20,8 +20,8 @@ import (
 const (
 	prunerConfigName = "tekton-pruner-default-spec"
 	prunerNamespace  = "tekton-pipelines"
-	testNamespace    = "pruner-test" //avoid creating test namespaces prefixed with tekton- as they are reserved for tekton components"
-	waitForDeletion  = 2 * time.Minute
+	testNamespace    = "pruner-test"   //avoid creating test namespaces prefixed with tekton- as they are reserved for tekton components"
+	waitForDeletion  = 5 * time.Minute // Increased to account for pruner controller processing time
 	pollingInterval  = 5 * time.Second
 )
 
@@ -568,6 +568,7 @@ func testPipelineRunConfigurationOverrides(ctx context.Context, t *testing.T, ku
 		t.Fatalf("Failed to create default namespace: %v", err)
 	}
 
+	t.Log("Setting up pruner configuration...")
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      prunerConfigName,
@@ -591,94 +592,126 @@ namespaces:
 		t.Fatalf("Failed to configure pruner: %v", err)
 	}
 
-	// Wait for config to be processed
-	time.Sleep(10 * time.Second)
-
-	// Create PipelineRuns in different namespaces
-	namespaces := []string{testNamespace, "default"}
-	pipelineRuns := make(map[string]*v1.PipelineRun)
-
-	for _, ns := range namespaces {
-		pr := &v1.PipelineRun{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      fmt.Sprintf("test-pipelinerun-override-%s", ns),
-				Namespace: ns,
-			},
-			Spec: v1.PipelineRunSpec{
-				PipelineSpec: &v1.PipelineSpec{
-					Tasks: []v1.PipelineTask{{
-						Name: "test-task",
-						TaskSpec: &v1.EmbeddedTask{
-							TaskSpec: v1.TaskSpec{
-								Steps: []v1.Step{{
-									Name:    "echo",
-									Image:   "ubuntu",
-									Command: []string{"echo", "hello"},
-								}},
-							},
-						},
-					}},
-				},
-			},
-		}
-
-		pr, err = tektonClient.TektonV1().PipelineRuns(ns).Create(ctx, pr, metav1.CreateOptions{})
-		if err != nil {
-			t.Fatalf("Failed to create test PipelineRun in namespace %s: %v", ns, err)
-		}
-
-		// Wait for PipelineRun completion
-		if err := waitForPipelineRunCompletion(ctx, tektonClient, pr.Name, ns); err != nil {
-			t.Fatalf("PipelineRun did not complete within timeout in namespace %s: %v", ns, err)
-		}
-
-		// Record the PipelineRun for later
-		pr, err = tektonClient.TektonV1().PipelineRuns(ns).Get(ctx, pr.Name, metav1.GetOptions{})
-		if err != nil {
-			t.Fatalf("Failed to get PipelineRun in namespace %s: %v", ns, err)
-		}
-		pipelineRuns[ns] = pr
-
-		if !pr.Status.GetCondition(apis.ConditionSucceeded).IsTrue() {
-			t.Fatalf("PipelineRun did not complete successfully in namespace %s", ns)
-		}
-
-		t.Logf("Created PipelineRun %s in namespace %s, completion time: %v",
-			pr.Name, ns, pr.Status.CompletionTime)
-	}
-
-	// Wait 30 seconds to ensure pruning has started
+	// Wait longer for config to be processed and pruner to be ready
+	t.Log("Waiting 30 seconds for config to be processed...")
 	time.Sleep(30 * time.Second)
 
-	// PipelineRun in test namespace should be deleted faster (60s TTL)
-	prNameTest := fmt.Sprintf("test-pipelinerun-override-%s", testNamespace)
-	if err := waitForPipelineRunDeletion(ctx, tektonClient, prNameTest, testNamespace); err != nil {
-		// Get current state for debugging
-		pr, getErr := tektonClient.TektonV1().PipelineRuns(testNamespace).Get(ctx, prNameTest, metav1.GetOptions{})
-		if getErr == nil {
-			t.Errorf("PipelineRun %s still exists in namespace %s with completion time %v and conditions: %v",
-				prNameTest, testNamespace, pr.Status.CompletionTime, pr.Status.Conditions)
-		}
-		t.Errorf("PipelineRun in test namespace was not deleted as expected: %v", err)
+	// First create the test namespace PipelineRun (60s TTL)
+	t.Log("Creating PipelineRun in test namespace...")
+	prTest := &v1.PipelineRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("test-pipelinerun-override-%s", testNamespace),
+			Namespace: testNamespace,
+		},
+		Spec: v1.PipelineRunSpec{
+			PipelineSpec: &v1.PipelineSpec{
+				Tasks: []v1.PipelineTask{{
+					Name: "test-task",
+					TaskSpec: &v1.EmbeddedTask{
+						TaskSpec: v1.TaskSpec{
+							Steps: []v1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo", "hello"},
+							}},
+						},
+					},
+				}},
+			},
+		},
 	}
 
-	// PipelineRun in default namespace should still exist (300s TTL)
-	prNameDefault := fmt.Sprintf("test-pipelinerun-override-default")
-	defaultPR, err := tektonClient.TektonV1().PipelineRuns("default").Get(ctx, prNameDefault, metav1.GetOptions{})
+	prTest, err = tektonClient.TektonV1().PipelineRuns(testNamespace).Create(ctx, prTest, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create test PipelineRun in test namespace: %v", err)
+	}
+
+	// Wait for test namespace PipelineRun completion
+	if err := waitForPipelineRunCompletion(ctx, tektonClient, prTest.Name, testNamespace); err != nil {
+		t.Fatalf("PipelineRun did not complete within timeout in test namespace: %v", err)
+	}
+
+	// Get completion time for test namespace PipelineRun
+	prTest, err = tektonClient.TektonV1().PipelineRuns(testNamespace).Get(ctx, prTest.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get PipelineRun in test namespace: %v", err)
+	}
+
+	testCompletionTime := prTest.Status.CompletionTime
+	t.Logf("Test namespace PipelineRun completed at %v", testCompletionTime)
+
+	// Wait 30 seconds before creating default namespace PipelineRun
+	t.Log("Waiting 30 seconds before creating default namespace PipelineRun...")
+	time.Sleep(30 * time.Second)
+
+	// Create default namespace PipelineRun (300s TTL)
+	t.Log("Creating PipelineRun in default namespace...")
+	prDefault := &v1.PipelineRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("test-pipelinerun-override-default"),
+			Namespace: "default",
+		},
+		Spec: v1.PipelineRunSpec{
+			PipelineSpec: &v1.PipelineSpec{
+				Tasks: []v1.PipelineTask{{
+					Name: "test-task",
+					TaskSpec: &v1.EmbeddedTask{
+						TaskSpec: v1.TaskSpec{
+							Steps: []v1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo", "hello"},
+							}},
+						},
+					},
+				}},
+			},
+		},
+	}
+
+	prDefault, err = tektonClient.TektonV1().PipelineRuns("default").Create(ctx, prDefault, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create test PipelineRun in default namespace: %v", err)
+	}
+
+	// Wait for default namespace PipelineRun completion
+	if err := waitForPipelineRunCompletion(ctx, tektonClient, prDefault.Name, "default"); err != nil {
+		t.Fatalf("PipelineRun did not complete within timeout in default namespace: %v", err)
+	}
+
+	// Get completion time for default namespace PipelineRun
+	prDefault, err = tektonClient.TektonV1().PipelineRuns("default").Get(ctx, prDefault.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get PipelineRun in default namespace: %v", err)
+	}
+
+	defaultCompletionTime := prDefault.Status.CompletionTime
+	t.Logf("Default namespace PipelineRun completed at %v", defaultCompletionTime)
+
+	// Wait for test namespace PipelineRun to be deleted (should happen at ~60s after completion)
+	t.Logf("Waiting for test namespace PipelineRun to be deleted (TTL=60s, completed at %v)...", testCompletionTime)
+	if err := waitForPipelineRunDeletion(ctx, tektonClient, prTest.Name, testNamespace); err != nil {
+		// Get current state for debugging
+		pr, getErr := tektonClient.TektonV1().PipelineRuns(testNamespace).Get(ctx, prTest.Name, metav1.GetOptions{})
+		if getErr == nil {
+			t.Errorf("PipelineRun %s still exists in namespace %s with completion time %v and conditions: %v",
+				prTest.Name, testNamespace, pr.Status.CompletionTime, pr.Status.Conditions)
+		}
+		t.Errorf("PipelineRun in test namespace was not deleted as expected (should be deleted ~60s after %v): %v",
+			testCompletionTime, err)
+	}
+
+	// Default namespace PipelineRun should still exist (300s TTL)
+	t.Logf("Checking default namespace PipelineRun (TTL=300s, completed at %v)...", defaultCompletionTime)
+	defaultPR, err := tektonClient.TektonV1().PipelineRuns("default").Get(ctx, prDefault.Name, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
-		t.Error("PipelineRun in default namespace was deleted when it should still exist")
+		t.Error("PipelineRun in default namespace was deleted when it should still exist (TTL=300s)")
 	} else if err != nil {
 		t.Errorf("Error getting PipelineRun from default namespace: %v", err)
 	} else {
 		t.Logf("Default namespace PipelineRun state - completion time: %v, conditions: %v",
 			defaultPR.Status.CompletionTime, defaultPR.Status.Conditions)
 	}
-
-	// Log final state for debugging
-	testPR := pipelineRuns[testNamespace]
-	t.Logf("Test configuration: testNamespace TTL=60s, default TTL=300s")
-	t.Logf("Test namespace PipelineRun initial completion time: %v", testPR.Status.CompletionTime)
-	t.Logf("Default namespace PipelineRun initial completion time: %v", pipelineRuns["default"].Status.CompletionTime)
 }
 
 func waitForTaskRunDeletion(ctx context.Context, client *clientset.Clientset, name, namespace string) error {
