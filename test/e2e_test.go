@@ -752,10 +752,15 @@ func getConfig() *rest.Config {
 	if err == nil {
 		return config
 	}
+
 	// Fall back to kubeconfig
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	configOverrides := &clientcmd.ConfigOverrides{}
 	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-	kubeConfigArgs, _ := kubeConfig.ClientConfig()
-	return kubeConfigArgs
+
+	config, err = kubeConfig.ClientConfig()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get Kubernetes config. Make sure you have a valid kubeconfig file or are running inside a Kubernetes cluster.\nError: %v", err))
+	}
+	return config
 }
