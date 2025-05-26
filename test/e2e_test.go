@@ -237,24 +237,10 @@ ttlSecondsAfterFinished: 60`,
 		t.Fatalf("Failed to create test PipelineRun: %v", err)
 	}
 
-	// Mark PipelineRun as completed
-	pr.Status = v1.PipelineRunStatus{
-		PipelineRunStatusFields: v1.PipelineRunStatusFields{
-			CompletionTime: &metav1.Time{Time: time.Now()},
-		},
+	// Wait for TaskRun completion
+	if err := waitForTaskRunCompletion(ctx, tektonClient, tr.Name, ns); err != nil {
+		t.Fatalf("TaskRun did not complete within timeout in namespace %s: %v", ns, err)
 	}
-	pr.Status.SetCondition(&apis.Condition{
-		Type:    apis.ConditionSucceeded,
-		Status:  corev1.ConditionTrue,
-		Reason:  "Completed",
-		Message: "PipelineRun completed successfully",
-	})
-
-	_, err = tektonClient.TektonV1().PipelineRuns(testNamespace).UpdateStatus(ctx, pr, metav1.UpdateOptions{})
-	if err != nil {
-		t.Fatalf("Failed to update PipelineRun status: %v", err)
-	}
-
 	// Wait for deletion
 	if err := waitForPipelineRunDeletion(ctx, tektonClient, pr.Name, pr.Namespace); err != nil {
 		t.Errorf("PipelineRun was not deleted by TTL: %v", err)
@@ -306,22 +292,25 @@ failedHistoryLimit: 1`,
 			t.Fatalf("Failed to create test TaskRun: %v", err)
 		}
 
-		// Mark as successful
-		tr.Status = v1.TaskRunStatus{
-			TaskRunStatusFields: v1.TaskRunStatusFields{
-				CompletionTime: &metav1.Time{Time: time.Now().Add(time.Duration(-i) * time.Hour)}, // Stagger completion times
-			},
+		// Wait for TaskRun completion
+		if err := waitForTaskRunCompletion(ctx, tektonClient, tr.Name, testNamespace); err != nil {
+			t.Fatalf("TaskRun did not complete within timeout: %v", err)
 		}
-		tr.Status.SetCondition(&apis.Condition{
-			Type:    apis.ConditionSucceeded,
-			Status:  corev1.ConditionTrue,
-			Reason:  "Completed",
-			Message: "TaskRun completed successfully",
-		})
 
-		_, err = tektonClient.TektonV1().TaskRuns(testNamespace).UpdateStatus(ctx, tr, metav1.UpdateOptions{})
+		// Verify successful completion
+		tr, err = tektonClient.TektonV1().TaskRuns(testNamespace).Get(ctx, tr.Name, metav1.GetOptions{})
 		if err != nil {
-			t.Fatalf("Failed to update TaskRun status: %v", err)
+			t.Fatalf("Failed to get TaskRun: %v", err)
+		}
+
+		if !tr.Status.GetCondition(apis.ConditionSucceeded).IsTrue() {
+			t.Fatalf("TaskRun did not complete successfully")
+		}
+
+		// Store completion time for later verification
+		completionTime := tr.Status.CompletionTime.Time
+		if !completionTime.Add(time.Duration(-i) * time.Hour).Before(time.Now()) {
+			t.Fatalf("TaskRun completion time was not properly staggered")
 		}
 	}
 
@@ -351,20 +340,19 @@ failedHistoryLimit: 1`,
 			t.Fatalf("Failed to create test TaskRun: %v", err)
 		}
 
-		// Mark as failed
-		tr.Status = v1.TaskRunStatus{
-			TaskRunStatusFields: v1.TaskRunStatusFields{
-				CompletionTime: &metav1.Time{Time: time.Now().Add(time.Duration(-i) * time.Hour)}, // Stagger completion times
-			},
+		// Wait for TaskRun completion
+		if err := waitForTaskRunCompletion(ctx, tektonClient, tr.Name, testNamespace); err != nil {
+			t.Fatalf("TaskRun did not complete within timeout: %v", err)
 		}
-		tr.Status.SetCondition(&apis.Condition{
-			Type:    apis.ConditionSucceeded,
-			Status:  corev1.ConditionFalse,
-			Reason:  "Failed",
-			Message: "TaskRun failed",
-		})
 
-		_, err = tektonClient.TektonV1().TaskRuns(testNamespace).UpdateStatus(ctx, tr, metav1.UpdateOptions{})
+		// Verify it failed as expected
+		tr, err = tektonClient.TektonV1().TaskRuns(testNamespace).Get(ctx, tr.Name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("Failed to get TaskRun: %v", err)
+		}
+
+		if !tr.Status.GetCondition(apis.ConditionSucceeded).IsFalse() {
+			t.Fatalf("TaskRun did not fail as expected")
 		if err != nil {
 			t.Fatalf("Failed to update TaskRun status: %v", err)
 		}
@@ -763,4 +751,34 @@ func getConfig() *rest.Config {
 		panic(fmt.Sprintf("Failed to get Kubernetes config. Make sure you have a valid kubeconfig file or are running inside a Kubernetes cluster.\nError: %v", err))
 	}
 	return config
+}
+
+func waitForTaskRunCompletion(ctx context.Context, client *clientset.Clientset, name, namespace string) error {
+	timeout := time.After(10 * time.Minute)
+	ticker := time.NewTicker(pollingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timed out waiting for TaskRun completion")
+		case <-ticker.C:
+			tr, err := client.TektonV1().TaskRuns(namespace).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			// Check if the TaskRun has completed
+			if tr.Status.CompletionTime != nil {
+				condition := tr.Status.GetCondition(apis.ConditionSucceeded)
+				if condition != nil {
+					switch condition.Status {
+					case corev1.ConditionTrue, corev1.ConditionFalse:
+						return nil
+					case corev1.ConditionUnknown:
+						// Continue waiting
+					}
+				}
+			}
+		}
+	}
 }
