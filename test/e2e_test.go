@@ -602,6 +602,9 @@ namespaces:
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("test-pipelinerun-override-%s", testNamespace),
 			Namespace: testNamespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "tekton-pruner",
+			},
 		},
 		Spec: v1.PipelineRunSpec{
 			PipelineSpec: &v1.PipelineSpec{
@@ -611,8 +614,9 @@ namespaces:
 						TaskSpec: v1.TaskSpec{
 							Steps: []v1.Step{{
 								Name:    "echo",
-								Image:   "ubuntu",
-								Command: []string{"echo", "hello"},
+								Image:   "busybox:stable",
+								Command: []string{"/bin/sh", "-c"},
+								Args:    []string{"echo hello"},
 							}},
 						},
 					},
@@ -640,16 +644,15 @@ namespaces:
 	testCompletionTime := prTest.Status.CompletionTime
 	t.Logf("Test namespace PipelineRun completed at %v", testCompletionTime)
 
-	// Wait 30 seconds before creating default namespace PipelineRun
-	t.Log("Waiting 30 seconds before creating default namespace PipelineRun...")
-	time.Sleep(30 * time.Second)
-
 	// Create default namespace PipelineRun (300s TTL)
 	t.Log("Creating PipelineRun in default namespace...")
 	prDefault := &v1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("test-pipelinerun-override-default"),
 			Namespace: "default",
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "tekton-pruner",
+			},
 		},
 		Spec: v1.PipelineRunSpec{
 			PipelineSpec: &v1.PipelineSpec{
@@ -659,8 +662,9 @@ namespaces:
 						TaskSpec: v1.TaskSpec{
 							Steps: []v1.Step{{
 								Name:    "echo",
-								Image:   "ubuntu",
-								Command: []string{"echo", "hello"},
+								Image:   "busybox:stable",
+								Command: []string{"/bin/sh", "-c"},
+								Args:    []string{"echo hello"},
 							}},
 						},
 					},
@@ -688,6 +692,10 @@ namespaces:
 	defaultCompletionTime := prDefault.Status.CompletionTime
 	t.Logf("Default namespace PipelineRun completed at %v", defaultCompletionTime)
 
+	// Wait a bit for pruner to process the completion
+	t.Log("Waiting 10 seconds for pruner to process completion...")
+	time.Sleep(10 * time.Second)
+
 	// Wait for test namespace PipelineRun to be deleted (should happen at ~60s after completion)
 	t.Logf("Waiting for test namespace PipelineRun to be deleted (TTL=60s, completed at %v)...", testCompletionTime)
 	if err := waitForPipelineRunDeletion(ctx, tektonClient, prTest.Name, testNamespace); err != nil {
@@ -696,6 +704,15 @@ namespaces:
 		if getErr == nil {
 			t.Errorf("PipelineRun %s still exists in namespace %s with completion time %v and conditions: %v",
 				prTest.Name, testNamespace, pr.Status.CompletionTime, pr.Status.Conditions)
+
+			// Log pruner controller pod logs for debugging
+			pods, _ := kubeClient.CoreV1().Pods(prunerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app=tekton-pruner-controller",
+			})
+			if len(pods.Items) > 0 {
+				logs, _ := kubeClient.CoreV1().Pods(prunerNamespace).GetLogs(pods.Items[0].Name, &corev1.PodLogOptions{}).Do(ctx).Raw()
+				t.Logf("Pruner controller logs:\n%s", string(logs))
+			}
 		}
 		t.Errorf("PipelineRun in test namespace was not deleted as expected (should be deleted ~60s after %v): %v",
 			testCompletionTime, err)
