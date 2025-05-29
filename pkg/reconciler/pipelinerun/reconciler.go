@@ -2,21 +2,19 @@ package pipelinerun
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/config"
+	"github.com/openshift-pipelines/tektoncd-pruner/pkg/telemetry"
 	pipelinev1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 
 	pipelineversioned "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	pipelinerunreconciler "github.com/tektoncd/pipeline/pkg/client/injection/reconciler/pipeline/v1/pipelinerun"
-	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"knative.dev/pkg/apis"
-	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
 	"knative.dev/pkg/reconciler"
 )
@@ -24,6 +22,7 @@ import (
 // Reconciler includes the kubernetes client to interact with the cluster
 type Reconciler struct {
 	kubeclient     kubernetes.Interface
+	client         pipelineversioned.Interface
 	ttlHandler     *config.TTLHandler
 	historyLimiter *config.HistoryLimiter
 }
@@ -36,25 +35,23 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, pr *pipelinev1.PipelineR
 	logger := logging.FromContext(ctx)
 	logger.Debugw("received a PipelineRun event", "namespace", pr.Namespace, "name", pr.Name, "status", pr.Status)
 
-	// execute the history limiter earlier than the ttl handler
-
-	// execute history limit action
-	err := r.historyLimiter.ProcessEvent(ctx, pr)
+	// Process TTL
+	err := r.ttlHandler.ProcessEvent(ctx, pr)
 	if err != nil {
-		logger.Errorw("error on processing history limiting for a PipelineRun", "namespace", pr.Namespace, "name", pr.Name, zap.Error(err))
+		logger.Errorf("Error processing TTL for PipelineRun: %v", err)
 		return err
 	}
 
-	// execute ttl handler
-	err = r.ttlHandler.ProcessEvent(ctx, pr)
+	// Process history limits
+	err = r.historyLimiter.ProcessEvent(ctx, pr)
 	if err != nil {
-		isRequeueKey, _ := controller.IsRequeueKey(err)
-		// the error is not a requeue error, print the error
-		if !isRequeueKey {
-			data, _ := json.Marshal(pr)
-			logger.Errorw("error on processing ttl for a PipelineRun", "namespace", pr.Namespace, "name", pr.Name, "resource", string(data), zap.Error(err))
-		}
+		logger.Errorf("Error processing history limits for PipelineRun: %v", err)
 		return err
+	}
+
+	// Check if the PipelineRun was deleted
+	if pr.DeletionTimestamp != nil {
+		telemetry.RecordPipelineRunPruned(ctx, pr.GetNamespace())
 	}
 
 	return nil
@@ -424,4 +421,13 @@ func (prf *PrFuncs) GetFailedHistoryLimitCount(namespace, name string, selectors
 // GetEnforcedConfigLevel retrieves the enforced config level for a PipelineRun.
 func (prf *PrFuncs) GetEnforcedConfigLevel(namespace, name string, selectors config.SelectorSpec) config.EnforcedConfigLevel {
 	return config.PrunerConfigStore.GetPipelineEnforcedConfigLevel(namespace, name, selectors)
+}
+
+func (r *Reconciler) delete(ctx context.Context, pr *pipelinev1.PipelineRun) error {
+	namespace := pr.GetNamespace()
+	if err := r.kubeclient.TektonV1().PipelineRuns(namespace).Delete(ctx, pr.GetName(), metav1.DeleteOptions{}); err != nil {
+		return err
+	}
+	telemetry.RecordPipelineRunPruned(ctx, namespace)
+	return nil
 }

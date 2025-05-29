@@ -1,0 +1,28 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: test-pipelinerun-
+spec:
+  pipelineSpec:
+    tasks:
+    - name: echo
+      taskSpec:
+        steps:
+        - name: echo
+          image: busybox
+          script: |
+            #!/bin/sh
+            echo "Hello World"
+---
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: test-taskrun-
+spec:
+  taskSpec:
+    steps:
+    - name: echo
+      image: busybox
+      script: |
+        #!/bin/sh
+        echo "Hello World"

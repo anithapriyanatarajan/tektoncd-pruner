@@ -63,6 +63,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.tekton-pipelines.svc:4318"
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "http/protobuf"
+            - name: OTEL_SERVICE_NAME
+              value: "tekton-pruner"
             - name: CONFIG_LOGGING_NAME
               value: config-logging-tekton-pruner
             - name: CONFIG_OBSERVABILITY_NAME

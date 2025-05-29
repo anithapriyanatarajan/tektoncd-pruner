@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/openshift-pipelines/tektoncd-pruner/pkg/telemetry"
 	"go.uber.org/zap"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/config"
 	pipelinev1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
-	pipelineversioned "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
+	pipelineclient "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	taskrunreconciler "github.com/tektoncd/pipeline/pkg/client/injection/reconciler/pipeline/v1/taskrun"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +27,7 @@ import (
 // SimpleDeployment resources.
 type Reconciler struct {
 	kubeclient     kubernetes.Interface
+	client         pipelineclient.Interface
 	ttlHandler     *config.TTLHandler
 	historyLimiter *config.HistoryLimiter
 }
@@ -45,20 +48,17 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *pipelinev1.TaskRun) 
 		return nil
 	}
 
-	// execute the history limiter earlier than the ttl handler
-
-	// execute history limit action
-	err := r.historyLimiter.ProcessEvent(ctx, tr)
-	if err != nil {
-		logger.Errorw("error on processing history limiting for a TaskRun",
-			"namespace", tr.Namespace, "name", tr.Name,
-			zap.Error(err),
-		)
-		return err
+	// Before deletion state
+	existsBefore := true
+	_, err := r.client.TektonV1().TaskRuns(tr.GetNamespace()).Get(ctx, tr.GetName(), metav1.GetOptions{})
+	if err != nil && k8serrors.IsNotFound(err) {
+		existsBefore = false
 	}
 
+	// execute the history limiter earlier than the ttl handler
+
 	// execute ttl handler
-	err = r.ttlHandler.ProcessEvent(ctx, tr)
+	shouldDelete, err := r.ttlHandler.ProcessEvent(ctx, tr)
 	if err != nil {
 		isRequeueKey, _ := controller.IsRequeueKey(err)
 		// the error is not a requeue error, print the error
@@ -72,6 +72,25 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *pipelinev1.TaskRun) 
 		}
 		return err
 	}
+	// Record metric only if the resource was successfully deleted
+	if _, err := r.kubeclient.TektonV1().TaskRuns(tr.GetNamespace()).Get(ctx, tr.GetName(), metav1.GetOptions{}); err != nil {
+		if !isRequeueKey {
+			telemetry.RecordTaskRunPruned(ctx, tr.GetNamespace())
+		}
+	}
+
+	if err := r.historyLimiter.ProcessEvent(ctx, tr); err != nil {
+		logger.Errorf("error processing history limits for taskrun: %v", err)
+		return err
+	}
+
+	// After deletion state - if it existed before and doesn't exist now, it was deleted
+	if existsBefore {
+		_, err = r.client.TektonV1().TaskRuns(tr.GetNamespace()).Get(ctx, tr.GetName(), metav1.GetOptions{})
+		if err != nil && k8serrors.IsNotFound(err) {
+			telemetry.RecordTaskRunPruned(ctx, tr.GetNamespace())
+		}
+	}
 
 	return nil
 }
@@ -79,7 +98,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *pipelinev1.TaskRun) 
 // TrFuncs provides methods for working with TaskRun resources
 // it contains a client to interact with the pipeline API and manage TaskRuns
 type TrFuncs struct {
-	client pipelineversioned.Interface
+	client pipelineclient.Interface
 }
 
 // Type returns the kind of resource represented by the TaskRunFuncs struct, which is "TaskRun".
@@ -89,7 +108,7 @@ func (trf *TrFuncs) Type() string {
 
 // NewTrFuncs creates a new instance of TrFuncs with the provided pipeline client.
 // This client is used to interact with the Tekton pipeline API.
-func NewTrFuncs(client pipelineversioned.Interface) *TrFuncs {
+func NewTrFuncs(client pipelineclient.Interface) *TrFuncs {
 	return &TrFuncs{client: client}
 }
 

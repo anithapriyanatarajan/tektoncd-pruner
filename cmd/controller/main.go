@@ -7,6 +7,7 @@ import (
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/pipelinerun"
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/taskrun"
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/tektonpruner"
+	"github.com/openshift-pipelines/tektoncd-pruner/pkg/telemetry"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
 	"knative.dev/pkg/controller"
@@ -39,9 +40,16 @@ func main() {
 	cfg.QPS = 2 * cfg.QPS
 	cfg.Burst = 2 * cfg.Burst
 
-	// Set up logging
+	// Set up logging and context
 	ctx := signals.NewContext()
 	logger := logging.FromContext(ctx)
+
+	// Initialize OpenTelemetry
+	shutdown, err := telemetry.InitializeMetrics(ctx)
+	if err != nil {
+		logger.Fatalf("Failed to initialize OpenTelemetry metrics: %v", err)
+	}
+	defer shutdown(ctx)
 
 	// Add namespaces
 	var namespaces []string
