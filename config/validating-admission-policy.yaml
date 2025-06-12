@@ -1,0 +1,114 @@
+# Copyright 2025 The Tekton Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tekton-pruner-config-validation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - operations: ["CREATE", "UPDATE"]
+      apiGroups: [""]
+      apiVersions: ["v1"]
+      resources: ["configmaps"]
+  validations:
+  # Only apply to tekton-pruner-default-spec ConfigMap
+  - expression: |
+      !(object.metadata.name == 'tekton-pruner-default-spec' && 
+        object.metadata.namespace == 'tekton-pipelines') ||
+      (
+        // Basic validation for global-config field presence
+        has(object.data) && has(object.data['global-config'])
+      )
+    message: "tekton-pruner-default-spec ConfigMap must contain global-config data field"
+    
+  # Validate that historyLimit field contains only numeric values (no quotes around numbers)
+  - expression: |
+      !(object.metadata.name == 'tekton-pruner-default-spec' && 
+        object.metadata.namespace == 'tekton-pipelines') ||
+      !has(object.data) ||
+      !has(object.data['global-config']) ||
+      (
+        // Check that historyLimit is not quoted as a string when it should be numeric
+        !object.data['global-config'].contains('historyLimit: "') &&
+        !object.data['global-config'].contains("historyLimit: '")
+      )
+    message: "historyLimit must be specified as a numeric value, not as a quoted string"
+    
+  # Validate that ttlSecondsAfterFinished field contains only numeric values
+  - expression: |
+      !(object.metadata.name == 'tekton-pruner-default-spec' && 
+        object.metadata.namespace == 'tekton-pipelines') ||
+      !has(object.data) ||
+      !has(object.data['global-config']) ||
+      (
+        !object.data['global-config'].contains('ttlSecondsAfterFinished: "') &&
+        !object.data['global-config'].contains("ttlSecondsAfterFinished: '")
+      )
+    message: "ttlSecondsAfterFinished must be specified as a numeric value, not as a quoted string"
+    
+  # Validate that successfulHistoryLimit field contains only numeric values
+  - expression: |
+      !(object.metadata.name == 'tekton-pruner-default-spec' && 
+        object.metadata.namespace == 'tekton-pipelines') ||
+      !has(object.data) ||
+      !has(object.data['global-config']) ||
+      (
+        !object.data['global-config'].contains('successfulHistoryLimit: "') &&
+        !object.data['global-config'].contains("successfulHistoryLimit: '")
+      )
+    message: "successfulHistoryLimit must be specified as a numeric value, not as a quoted string"
+    
+  # Validate that failedHistoryLimit field contains only numeric values
+  - expression: |
+      !(object.metadata.name == 'tekton-pruner-default-spec' && 
+        object.metadata.namespace == 'tekton-pipelines') ||
+      !has(object.data) ||
+      !has(object.data['global-config']) ||
+      (
+        !object.data['global-config'].contains('failedHistoryLimit: "') &&
+        !object.data['global-config'].contains("failedHistoryLimit: '")
+      )
+    message: "failedHistoryLimit must be specified as a numeric value, not as a quoted string"
+    
+  # Validate enforcedConfigLevel has valid enum values
+  - expression: |
+      !(object.metadata.name == 'tekton-pruner-default-spec' && 
+        object.metadata.namespace == 'tekton-pipelines') ||
+      !has(object.data) ||
+      !has(object.data['global-config']) ||
+      !object.data['global-config'].contains('enforcedConfigLevel:') ||
+      (
+        object.data['global-config'].contains('enforcedConfigLevel: global') ||
+        object.data['global-config'].contains('enforcedConfigLevel: namespace') ||
+        object.data['global-config'].contains('enforcedConfigLevel: resource')
+      )
+    message: "enforcedConfigLevel must be one of: global, namespace, resource"
+
+---
+
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tekton-pruner-config-validation-binding
+spec:
+  policyName: tekton-pruner-config-validation
+  validationActions: [Warn, Audit]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        name: tekton-pipelines

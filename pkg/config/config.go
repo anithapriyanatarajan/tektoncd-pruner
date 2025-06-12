@@ -18,6 +18,8 @@ package config
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -74,6 +76,59 @@ type ResourceSpec struct {
 	HistoryLimit            *int32               `yaml:"historyLimit"`
 }
 
+// UnmarshalYAML implements custom unmarshaling for ResourceSpec to handle numeric fields as either string or int
+func (rs *ResourceSpec) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type Alias ResourceSpec
+	temp := &struct {
+		HistoryLimit            interface{} `yaml:"historyLimit"`
+		TTLSecondsAfterFinished interface{} `yaml:"ttlSecondsAfterFinished"`
+		SuccessfulHistoryLimit  interface{} `yaml:"successfulHistoryLimit"`
+		FailedHistoryLimit      interface{} `yaml:"failedHistoryLimit"`
+		*Alias
+	}{
+		Alias: (*Alias)(rs),
+	}
+
+	if err := unmarshal(temp); err != nil {
+		return err
+	}
+
+	// Convert numeric fields
+	if temp.HistoryLimit != nil {
+		if val, err := parseIntField(temp.HistoryLimit, "historyLimit"); err != nil {
+			return err
+		} else if val != nil {
+			rs.HistoryLimit = val
+		}
+	}
+
+	if temp.TTLSecondsAfterFinished != nil {
+		if val, err := parseIntField(temp.TTLSecondsAfterFinished, "ttlSecondsAfterFinished"); err != nil {
+			return err
+		} else if val != nil {
+			rs.TTLSecondsAfterFinished = val
+		}
+	}
+
+	if temp.SuccessfulHistoryLimit != nil {
+		if val, err := parseIntField(temp.SuccessfulHistoryLimit, "successfulHistoryLimit"); err != nil {
+			return err
+		} else if val != nil {
+			rs.SuccessfulHistoryLimit = val
+		}
+	}
+
+	if temp.FailedHistoryLimit != nil {
+		if val, err := parseIntField(temp.FailedHistoryLimit, "failedHistoryLimit"); err != nil {
+			return err
+		} else if val != nil {
+			rs.FailedHistoryLimit = val
+		}
+	}
+
+	return nil
+}
+
 // SelectorSpec allows specifying selectors for matching resources like PipelineRun or TaskRun
 type SelectorSpec struct {
 	// Match by labels or Annotations. If both are specified, Annotations will take priority.
@@ -93,6 +148,59 @@ type NamespaceSpec struct {
 	TaskRuns                []ResourceSpec       `yaml:"taskRuns"`
 }
 
+// UnmarshalYAML implements custom unmarshaling for NamespaceSpec to handle numeric fields as either string or int
+func (ns *NamespaceSpec) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type Alias NamespaceSpec
+	temp := &struct {
+		HistoryLimit            interface{} `yaml:"historyLimit"`
+		TTLSecondsAfterFinished interface{} `yaml:"ttlSecondsAfterFinished"`
+		SuccessfulHistoryLimit  interface{} `yaml:"successfulHistoryLimit"`
+		FailedHistoryLimit      interface{} `yaml:"failedHistoryLimit"`
+		*Alias
+	}{
+		Alias: (*Alias)(ns),
+	}
+
+	if err := unmarshal(temp); err != nil {
+		return err
+	}
+
+	// Convert numeric fields
+	if temp.HistoryLimit != nil {
+		if val, err := parseIntField(temp.HistoryLimit, "historyLimit"); err != nil {
+			return err
+		} else if val != nil {
+			ns.HistoryLimit = val
+		}
+	}
+
+	if temp.TTLSecondsAfterFinished != nil {
+		if val, err := parseIntField(temp.TTLSecondsAfterFinished, "ttlSecondsAfterFinished"); err != nil {
+			return err
+		} else if val != nil {
+			ns.TTLSecondsAfterFinished = val
+		}
+	}
+
+	if temp.SuccessfulHistoryLimit != nil {
+		if val, err := parseIntField(temp.SuccessfulHistoryLimit, "successfulHistoryLimit"); err != nil {
+			return err
+		} else if val != nil {
+			ns.SuccessfulHistoryLimit = val
+		}
+	}
+
+	if temp.FailedHistoryLimit != nil {
+		if val, err := parseIntField(temp.FailedHistoryLimit, "failedHistoryLimit"); err != nil {
+			return err
+		} else if val != nil {
+			ns.FailedHistoryLimit = val
+		}
+	}
+
+	return nil
+}
+
 // PrunerConfig used to hold the cluster-wide pruning config as well as namespace specific pruning config
 type PrunerConfig struct {
 	// EnforcedConfigLevel allowed values: global, namespace, resource (default: resource)
@@ -102,6 +210,87 @@ type PrunerConfig struct {
 	FailedHistoryLimit      *int32                   `yaml:"failedHistoryLimit"`
 	HistoryLimit            *int32                   `yaml:"historyLimit"`
 	Namespaces              map[string]NamespaceSpec `yaml:"namespaces"`
+}
+
+// UnmarshalYAML implements custom unmarshaling for PrunerConfig to handle numeric fields as either string or int
+func (pc *PrunerConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type Alias PrunerConfig
+	temp := &struct {
+		HistoryLimit            interface{} `yaml:"historyLimit"`
+		TTLSecondsAfterFinished interface{} `yaml:"ttlSecondsAfterFinished"`
+		SuccessfulHistoryLimit  interface{} `yaml:"successfulHistoryLimit"`
+		FailedHistoryLimit      interface{} `yaml:"failedHistoryLimit"`
+		*Alias
+	}{
+		Alias: (*Alias)(pc),
+	}
+
+	if err := unmarshal(temp); err != nil {
+		return err
+	}
+
+	// Convert HistoryLimit
+	if temp.HistoryLimit != nil {
+		if val, err := parseIntField(temp.HistoryLimit, "historyLimit"); err != nil {
+			return err
+		} else if val != nil {
+			pc.HistoryLimit = val
+		}
+	}
+
+	// Convert TTLSecondsAfterFinished
+	if temp.TTLSecondsAfterFinished != nil {
+		if val, err := parseIntField(temp.TTLSecondsAfterFinished, "ttlSecondsAfterFinished"); err != nil {
+			return err
+		} else if val != nil {
+			pc.TTLSecondsAfterFinished = val
+		}
+	}
+
+	// Convert SuccessfulHistoryLimit
+	if temp.SuccessfulHistoryLimit != nil {
+		if val, err := parseIntField(temp.SuccessfulHistoryLimit, "successfulHistoryLimit"); err != nil {
+			return err
+		} else if val != nil {
+			pc.SuccessfulHistoryLimit = val
+		}
+	}
+
+	// Convert FailedHistoryLimit
+	if temp.FailedHistoryLimit != nil {
+		if val, err := parseIntField(temp.FailedHistoryLimit, "failedHistoryLimit"); err != nil {
+			return err
+		} else if val != nil {
+			pc.FailedHistoryLimit = val
+		}
+	}
+
+	return nil
+}
+
+// parseIntField converts interface{} to *int32, handling both string and numeric types
+func parseIntField(value interface{}, fieldName string) (*int32, error) {
+	switch v := value.(type) {
+	case string:
+		parsed, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing %s as integer: %w", fieldName, err)
+		}
+		result := int32(parsed)
+		return &result, nil
+	case int:
+		result := int32(v)
+		return &result, nil
+	case int32:
+		return &v, nil
+	case int64:
+		result := int32(v)
+		return &result, nil
+	case nil:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected type for %s: %T, expected string or integer", fieldName, v)
+	}
 }
 
 // prunerConfigStore defines the store structure to hold config from ConfigMap
