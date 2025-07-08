@@ -29,6 +29,9 @@ import (
 	clockUtil "k8s.io/utils/clock"
 	controller "knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
+
+	"github.com/openshift-pipelines/tektoncd-pruner/pkg/observability"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -85,28 +88,146 @@ func NewTTLHandler(clock clockUtil.Clock, resourceFn TTLResourceFuncs) (*TTLHand
 // It evaluates the resource's state, checks whether it should be cleaned up,
 // and updates the TTL annotation if needed
 func (th *TTLHandler) ProcessEvent(ctx context.Context, resource metav1.Object) error {
+	// Import observability at the top of the file if not already imported
+	// "github.com/openshift-pipelines/tektoncd-pruner/pkg/observability"
+	// "go.opentelemetry.io/otel/attribute"
+	// "time"
+
+	logger := logging.FromContext(ctx)
+	metrics := observability.GetGlobalMetrics()
+
+	// Start TTL processing span
+	ctx, span := observability.StartSpan(ctx, "ttl.process_event",
+		attribute.String("resource.type", th.resourceFn.Type()),
+		attribute.String("resource.name", resource.GetName()),
+		attribute.String("resource.namespace", resource.GetNamespace()),
+	)
+	defer span.End()
+
+	labels := &observability.MetricLabels{
+		Namespace:    resource.GetNamespace(),
+		ResourceType: th.resourceFn.Type(),
+	}
+
+	processStart := time.Now()
+	defer func() {
+		if metrics != nil {
+			metrics.RecordTTLProcessingDuration(ctx, labels, time.Since(processStart))
+		}
+	}()
+
 	// if a resource is in deletion state, no further action needed
 	if resource.GetDeletionTimestamp() != nil {
+		observability.AddEvent(span, "resource.already_deleting")
+		labels.Reason = "already_deleting"
+		if metrics != nil {
+			metrics.RecordResourceSkipped(ctx, labels, "already_deleting")
+		}
+		observability.RecordSuccess(span)
 		return nil
 	}
 
 	// if a resource is not completed state, no further action needed
 	if !th.resourceFn.IsCompleted(resource) && th.resourceFn.Ignore(resource) {
+		observability.AddEvent(span, "resource.not_completed_or_ignored")
+		labels.Reason = "not_completed"
+		if metrics != nil {
+			metrics.RecordResourceSkipped(ctx, labels, "not_completed")
+		}
+		observability.RecordSuccess(span)
 		return nil
 	}
 
 	// update ttl annotation, if not present
+	updateStart := time.Now()
 	err := th.updateAnnotationTTLSeconds(ctx, resource)
+	updateDuration := time.Since(updateStart)
+
 	if err != nil {
+		observability.RecordError(span, err, "annotation_update_error")
+		observability.AddEvent(span, "ttl.annotation_update_failed",
+			attribute.String("error", err.Error()),
+			attribute.Float64("duration_seconds", updateDuration.Seconds()),
+		)
+		if metrics != nil {
+			labels.Reason = "annotation_update_error"
+			metrics.RecordResourceError(ctx, labels, "annotation_update")
+		}
 		return err
+	}
+
+	observability.AddEvent(span, "ttl.annotation_updated",
+		attribute.Float64("duration_seconds", updateDuration.Seconds()),
+	)
+
+	if metrics != nil {
+		metrics.RecordTTLAnnotationUpdate(ctx, labels)
 	}
 
 	// if the resource is not available for cleanup, no further action needed
 	if !th.needsCleanup(resource) {
+		observability.AddEvent(span, "resource.no_cleanup_needed")
+		labels.Reason = "no_cleanup_needed"
+		if metrics != nil {
+			metrics.RecordResourceSkipped(ctx, labels, "no_cleanup_needed")
+		}
+		observability.RecordSuccess(span)
 		return nil
 	}
 
-	return th.removeResource(ctx, resource)
+	// Record TTL expiration event
+	if metrics != nil {
+		metrics.RecordTTLExpiration(ctx, labels)
+	}
+
+	observability.AddEvent(span, "resource.cleanup_required")
+
+	// Calculate resource age for metrics
+	var resourceAge float64
+	if !resource.GetCreationTimestamp().Time.IsZero() {
+		resourceAge = time.Since(resource.GetCreationTimestamp().Time).Seconds()
+	}
+
+	deleteStart := time.Now()
+	err = th.removeResource(ctx, resource)
+	deleteDuration := time.Since(deleteStart)
+
+	if err != nil {
+		observability.RecordError(span, err, "resource_deletion_error")
+		observability.AddEvent(span, "resource.deletion_failed",
+			attribute.String("error", err.Error()),
+			attribute.Float64("duration_seconds", deleteDuration.Seconds()),
+		)
+		if metrics != nil {
+			labels.Reason = "deletion_error"
+			metrics.RecordResourceError(ctx, labels, "deletion")
+			metrics.RecordResourceDeletionDuration(ctx, labels, deleteDuration)
+		}
+		return err
+	}
+
+	observability.AddEvent(span, "resource.deleted_successfully",
+		attribute.Float64("resource_age_seconds", resourceAge),
+		attribute.Float64("deletion_duration_seconds", deleteDuration.Seconds()),
+	)
+
+	if metrics != nil {
+		labels.Reason = "ttl_expired"
+		labels.Status = "deleted"
+		metrics.RecordResourceDeleted(ctx, labels, resourceAge)
+		metrics.RecordResourceDeletionDuration(ctx, labels, deleteDuration)
+	}
+
+	observability.RecordSuccess(span)
+	logger.Debugw("TTL processing completed successfully",
+		"resource", th.resourceFn.Type(),
+		"namespace", resource.GetNamespace(),
+		"name", resource.GetName(),
+		"resourceAge", resourceAge,
+		"deletionDuration", deleteDuration,
+	)
+
+	return nil
 }
 
 // updateAnnotationTTLSeconds updates the TTL annotation of a resource if needed

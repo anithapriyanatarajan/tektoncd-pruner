@@ -71,6 +71,30 @@ spec:
               value: pruner.tekton.dev
             - name: CONFIG_LEADERELECTION_NAME
               value: config-leader-election-tekton-pruner-controller
+            # OpenTelemetry Configuration
+            - name: OTEL_SERVICE_NAME
+              value: tektoncd-pruner
+            - name: OTEL_SERVICE_VERSION
+              value: "v1.0.0"
+            - name: METRICS_ENABLED
+              value: "true"
+            - name: METRICS_PORT
+              value: "9090"
+            - name: PROMETHEUS_ENABLED
+              value: "true"
+            - name: TRACING_ENABLED
+              value: "false"
+            - name: OTLP_METRICS_ENABLED
+              value: "false"
+            - name: OTLP_TRACE_ENABLED
+              value: "false"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.name=tektoncd-pruner,service.version=v1.0.0,service.namespace=$(SYSTEM_NAMESPACE)"
+            # OTLP Configuration (uncomment and configure if using OTLP)
+            # - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            #   value: "http://jaeger:4317"
+            # - name: OTEL_EXPORTER_OTLP_INSECURE
+            #   value: "true"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

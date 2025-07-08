@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/config"
+	"github.com/openshift-pipelines/tektoncd-pruner/pkg/observability"
 	pipelinev1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 
 	pipelineversioned "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	pipelinerunreconciler "github.com/tektoncd/pipeline/pkg/client/injection/reconciler/pipeline/v1/pipelinerun"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,28 +37,119 @@ var _ pipelinerunreconciler.Interface = (*Reconciler)(nil)
 // ReconcileKind implements Interface.ReconcileKind.
 func (r *Reconciler) ReconcileKind(ctx context.Context, pr *pipelinev1.PipelineRun) reconciler.Event {
 	logger := logging.FromContext(ctx)
+	metrics := observability.GetGlobalMetrics()
+
+	// Start reconciliation span
+	ctx, span := observability.StartSpan(ctx, "pipelinerun.reconciliation",
+		attribute.String("resource.type", "PipelineRun"),
+		attribute.String("resource.name", pr.Name),
+		attribute.String("resource.namespace", pr.Namespace),
+		attribute.String("resource.uid", string(pr.UID)),
+	)
+	defer span.End()
+
+	// Start timing reconciliation
+	reconcileStart := time.Now()
+
+	labels := &observability.MetricLabels{
+		Namespace:    pr.Namespace,
+		ResourceType: "PipelineRun",
+		Status:       "unknown",
+	}
+
+	defer func() {
+		// Record reconciliation duration at the end
+		if metrics != nil {
+			metrics.RecordReconciliationDuration(ctx, labels, time.Since(reconcileStart))
+		}
+	}()
+
 	logger.Debugw("received a PipelineRun event", "namespace", pr.Namespace, "name", pr.Name, "status", pr.Status)
 
+	// Record that we processed this resource
+	if metrics != nil {
+		metrics.RecordResourceProcessed(ctx, labels)
+	}
+
+	// Add event to trace
+	observability.AddEvent(span, "reconciliation.started",
+		attribute.String("pipeline.name", pr.Spec.PipelineRef.Name),
+		attribute.String("status.phase", string(pr.Status.GetCondition(apis.ConditionSucceeded).Status)),
+	)
+
 	// execute the history limiter earlier than the ttl handler
+	historyStart := time.Now()
+	ctx, historySpan := observability.StartSpan(ctx, "pipelinerun.history_processing")
 
 	// execute history limit action
 	err := r.historyLimiter.ProcessEvent(ctx, pr)
+	historyDuration := time.Since(historyStart)
+
 	if err != nil {
+		observability.RecordError(historySpan, err, "history_processing_error")
+		if metrics != nil {
+			labels.Reason = "history_processing_error"
+			metrics.RecordResourceError(ctx, labels, "history_processing")
+			metrics.RecordHistoryProcessingDuration(ctx, labels, historyDuration)
+		}
 		logger.Errorw("error on processing history limiting for a PipelineRun", "namespace", pr.Namespace, "name", pr.Name, zap.Error(err))
+		historySpan.End()
+		observability.RecordError(span, err, "history_processing_error")
 		return err
 	}
 
+	observability.RecordSuccess(historySpan)
+	if metrics != nil {
+		metrics.RecordHistoryProcessingDuration(ctx, labels, historyDuration)
+	}
+	historySpan.End()
+
 	// execute ttl handler
+	ttlStart := time.Now()
+	ctx, ttlSpan := observability.StartSpan(ctx, "pipelinerun.ttl_processing")
+
 	err = r.ttlHandler.ProcessEvent(ctx, pr)
+	ttlDuration := time.Since(ttlStart)
+
 	if err != nil {
 		isRequeueKey, _ := controller.IsRequeueKey(err)
 		// the error is not a requeue error, print the error
 		if !isRequeueKey {
 			data, _ := json.Marshal(pr)
 			logger.Errorw("error on processing ttl for a PipelineRun", "namespace", pr.Namespace, "name", pr.Name, "resource", string(data), zap.Error(err))
+
+			observability.RecordError(ttlSpan, err, "ttl_processing_error")
+			if metrics != nil {
+				labels.Reason = "ttl_processing_error"
+				metrics.RecordResourceError(ctx, labels, "ttl_processing")
+			}
+		} else {
+			// For requeue errors, we don't want to record as an error in metrics
+			observability.AddEvent(ttlSpan, "requeue_requested",
+				attribute.String("reason", err.Error()),
+			)
 		}
+
+		if metrics != nil {
+			metrics.RecordTTLProcessingDuration(ctx, labels, ttlDuration)
+		}
+		ttlSpan.End()
+		observability.RecordError(span, err, "ttl_processing_error")
 		return err
 	}
+
+	observability.RecordSuccess(ttlSpan)
+	if metrics != nil {
+		metrics.RecordTTLProcessingDuration(ctx, labels, ttlDuration)
+	}
+	ttlSpan.End()
+
+	// Mark reconciliation as successful
+	labels.Status = "success"
+	observability.RecordSuccess(span)
+	observability.AddEvent(span, "reconciliation.completed",
+		attribute.String("status", "success"),
+	)
 
 	return nil
 }

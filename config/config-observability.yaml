@@ -87,3 +87,55 @@ data:
     # flag to "true" could cause extra Stackdriver charge.
     # If metrics.backend-destination is not Stackdriver, this is ignored.
     metrics.allow-stackdriver-custom-metrics: "false"
+
+    ################################
+    #                              #
+    #  OPENTELEMETRY CONFIGURATION #
+    #                              #
+    ################################
+
+    # OpenTelemetry metrics configuration
+    # Enable or disable OpenTelemetry metrics collection
+    otel.metrics.enabled: "true"
+    
+    # Metrics export interval (duration format: 30s, 1m, etc.)
+    otel.metrics.interval: "30s"
+    
+    # Enable Prometheus format metrics export
+    otel.prometheus.enabled: "true"
+    
+    # Enable OTLP metrics export to collectors like Jaeger, OTEL Collector
+    otel.otlp.metrics.enabled: "false"
+    
+    # OpenTelemetry tracing configuration
+    # Enable or disable OpenTelemetry tracing
+    otel.tracing.enabled: "false"
+    
+    # Tracing sample rate (0.0 to 1.0)
+    otel.tracing.sample-rate: "0.1"
+    
+    # Enable OTLP trace export
+    otel.otlp.trace.enabled: "false"
+    
+    # OTLP Exporter configuration
+    # OTLP endpoint for metrics and traces export
+    otel.otlp.endpoint: "http://jaeger:4317"
+    
+    # Use insecure connection to OTLP endpoint
+    otel.otlp.insecure: "true"
+    
+    # OTLP headers for authentication (comma-separated key=value pairs)
+    # otel.otlp.headers: "authorization=Bearer token,x-custom-header=value"
+    
+    # OpenTelemetry resource attributes (comma-separated key=value pairs)
+    otel.resource.attributes: "service.name=tektoncd-pruner,service.version=v1.0.0"
+    
+    # Metrics-specific configuration
+    # Custom metric labels to include (comma-separated list)
+    otel.metrics.labels: "namespace,resource_type,status,config_level"
+    
+    # Histogram bucket boundaries for duration metrics (comma-separated floats)
+    otel.metrics.duration.buckets: "0.001,0.01,0.1,0.5,1.0,2.0,5.0,10.0,30.0"
+    
+    # Histogram bucket boundaries for age metrics (comma-separated floats in seconds)
+    otel.metrics.age.buckets: "60,300,1800,3600,7200,21600,86400,604800,2592000"

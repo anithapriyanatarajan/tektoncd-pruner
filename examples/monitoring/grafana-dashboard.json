@@ -1,0 +1,117 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Tekton Pruner Metrics",
+    "tags": ["tekton", "pruner", "opentelemetry"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Resource Processing Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(tektoncd_pruner_resources_processed_total[5m])",
+            "legendFormat": "{{resource_type}} ({{namespace}})"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Resource Deletion Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(tektoncd_pruner_resources_deleted_total[5m])",
+            "legendFormat": "{{resource_type}} ({{namespace}})"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Reconciliation Duration",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(tektoncd_pruner_reconciliation_duration_seconds_bucket[5m]))",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.50, rate(tektoncd_pruner_reconciliation_duration_seconds_bucket[5m]))",
+            "legendFormat": "50th percentile"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Error Rate by Type",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(tektoncd_pruner_resources_errors_total[5m])",
+            "legendFormat": "{{resource_type}} errors"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 5,
+        "title": "Active Resources Count",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "tektoncd_pruner_active_resources",
+            "legendFormat": "{{resource_type}} ({{namespace}})"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Resource Age at Deletion",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "rate(tektoncd_pruner_resource_age_at_deletion_seconds_bucket[5m])",
+            "legendFormat": "{{le}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24}
+      }
+    ]
+  }
+} 

@@ -1,0 +1,96 @@
+# Example Prometheus Configuration for tektoncd-pruner
+# Add this configuration to your existing prometheus.yml
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  # Tekton Pruner metrics
+  - job_name: 'tekton-pruner'
+    static_configs:
+      - targets: ['tekton-pruner-controller-metrics.tekton-pipelines.svc.cluster.local:9090']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metric_relabel_configs:
+      # Keep only tektoncd-pruner metrics
+      - source_labels: [__name__]
+        regex: 'tektoncd_pruner_.*'
+        action: keep
+      # Add job label
+      - target_label: job
+        replacement: tekton-pruner
+
+  # Alternative: Kubernetes Service Discovery approach
+  # Uncomment and use this instead of static_configs if you prefer dynamic discovery
+  #
+  # - job_name: 'tekton-pruner-k8s-discovery'
+  #   kubernetes_sd_configs:
+  #     - role: endpoints
+  #       namespaces:
+  #         names:
+  #           - tekton-pipelines
+  #   relabel_configs:
+  #     # Keep only tekton-pruner-controller-metrics service
+  #     - source_labels: [__meta_kubernetes_service_name]
+  #       action: keep
+  #       regex: tekton-pruner-controller-metrics
+  #     # Keep only http-metrics port
+  #     - source_labels: [__meta_kubernetes_endpoint_port_name]
+  #       action: keep
+  #       regex: http-metrics
+  #     # Set job name
+  #     - target_label: job
+  #       replacement: tekton-pruner
+  #     # Add service labels as metrics labels
+  #     - source_labels: [__meta_kubernetes_service_label_app]
+  #       target_label: app
+  #     - source_labels: [__meta_kubernetes_service_label_pruner_tekton_dev_release]
+  #       target_label: release
+
+rule_files:
+  # Add alerting rules if needed
+  - "tekton-pruner-alerts.yml"
+
+# Example alerting rules (create tekton-pruner-alerts.yml)
+---
+# tekton-pruner-alerts.yml
+groups:
+  - name: tekton-pruner.rules
+    rules:
+      - alert: TektonPrunerDown
+        expr: up{job="tekton-pruner"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tekton Pruner is down"
+          description: "Tekton Pruner has been down for more than 1 minute."
+
+      - alert: TektonPrunerHighErrorRate
+        expr: rate(tektoncd_pruner_resources_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate in Tekton Pruner"
+          description: "Tekton Pruner error rate is {{ $value }} errors per second."
+
+      - alert: TektonPrunerSlowProcessing
+        expr: histogram_quantile(0.95, rate(tektoncd_pruner_reconciliation_duration_seconds_bucket[5m])) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tekton Pruner slow processing"
+          description: "95th percentile reconciliation duration is {{ $value }} seconds."
+
+      - alert: TektonPrunerNoResourcesProcessed
+        expr: rate(tektoncd_pruner_resources_processed_total[1h]) == 0
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tekton Pruner not processing resources"
+          description: "No resources have been processed by Tekton Pruner in the last hour." 

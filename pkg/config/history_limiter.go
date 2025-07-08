@@ -20,17 +20,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
-	"slices"
-	"strconv"
 	"time"
 
-	// tektonprunerv1alpha1 "github.com/openshift-pipelines/tektoncd-pruner/pkg/apis/tektonpruner/v1alpha1"
+	"sort"
+
+	"github.com/openshift-pipelines/tektoncd-pruner/pkg/observability"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/pkg/logging"
-	"knative.dev/pkg/ptr"
 )
 
 // HistoryLimiterResourceFuncs defines a set of methods that operate on resources
@@ -71,43 +70,126 @@ func NewHistoryLimiter(resourceFn HistoryLimiterResourceFuncs) (*HistoryLimiter,
 	return hl, nil
 }
 
-// ProcessEvent processes an event for a given resource and performs cleanup
-// based on its status. The method checks if the resource is in a deletion state,
-// whether it has already been processed, and if it's in a completed state. Depending
-// on the resource's completion status, it will either trigger cleanup for successful
-// or failed resources
+// ProcessEvent processes the given resource for history limit cleanup
 func (hl *HistoryLimiter) ProcessEvent(ctx context.Context, resource metav1.Object) error {
 	logger := logging.FromContext(ctx)
-	logger.Debugw("processing an event for limit logic", "resource", hl.resourceFn.Type(), "namespace", resource.GetNamespace(), "name", resource.GetName())
+	metrics := observability.GetGlobalMetrics()
 
-	// if the resource is on deletion state, no action needed
-	if resource.GetDeletionTimestamp() != nil {
-		logger.Debugw("resource is in deletion state", "resource", hl.resourceFn.Type(), "namespace", resource.GetNamespace(), "name", resource.GetName())
-		return nil
+	// Start history processing span
+	ctx, span := observability.StartSpan(ctx, "history.process_event",
+		attribute.String("resource.type", hl.resourceFn.Type()),
+		attribute.String("resource.name", resource.GetName()),
+		attribute.String("resource.namespace", resource.GetNamespace()),
+	)
+	defer span.End()
+
+	labels := &observability.MetricLabels{
+		Namespace:    resource.GetNamespace(),
+		ResourceType: hl.resourceFn.Type(),
 	}
 
+	processStart := time.Now()
+	defer func() {
+		if metrics != nil {
+			metrics.RecordHistoryProcessingDuration(ctx, labels, time.Since(processStart))
+		}
+	}()
+
+	// Check if the resource is already processed
 	if hl.isProcessed(resource) {
-		logger.Debugw("already processed", "resource", hl.resourceFn.Type(), "namespace", resource.GetNamespace(), "name", resource.GetName())
+		observability.AddEvent(span, "resource.already_processed")
+		labels.Reason = "already_processed"
+		if metrics != nil {
+			metrics.RecordResourceSkipped(ctx, labels, "already_processed")
+		}
+		observability.RecordSuccess(span)
 		return nil
 	}
 
-	// if the resource is still in running state, ignore it
+	// Check if the resource is completed
 	if !hl.resourceFn.IsCompleted(resource) {
-		logger.Debugw("resource is not in completion state", "resource", hl.resourceFn.Type(), "namespace", resource.GetNamespace(), "name", resource.GetName())
+		observability.AddEvent(span, "resource.not_completed")
+		labels.Reason = "not_completed"
+		if metrics != nil {
+			metrics.RecordResourceSkipped(ctx, labels, "not_completed")
+		}
+		observability.RecordSuccess(span)
 		return nil
 	}
 
-	defer hl.markAsProcessed(ctx, resource)
+	// Mark the resource as processed
+	hl.markAsProcessed(ctx, resource)
 
-	if hl.resourceFn.IsSuccessful(resource) {
-		logger.Debugw("success - cleanup", "resource", hl.resourceFn.Type(), "namespace", resource.GetNamespace(), "name", resource.GetName())
-		return hl.DoSuccessfulResourceCleanup(ctx, resource)
+	observability.AddEvent(span, "resource.marked_as_processed")
+
+	// Process cleanup for successful resources
+	if hl.isSuccessfulResource(resource) {
+		observability.AddEvent(span, "processing.successful_resource_cleanup")
+
+		cleanupStart := time.Now()
+		err := hl.DoSuccessfulResourceCleanup(ctx, resource)
+		cleanupDuration := time.Since(cleanupStart)
+
+		if err != nil {
+			observability.RecordError(span, err, "successful_cleanup_error")
+			observability.AddEvent(span, "cleanup.successful_failed",
+				attribute.String("error", err.Error()),
+				attribute.Float64("duration_seconds", cleanupDuration.Seconds()),
+			)
+			if metrics != nil {
+				labels.Reason = "successful_cleanup_error"
+				metrics.RecordResourceError(ctx, labels, "successful_cleanup")
+			}
+			return err
+		}
+
+		observability.AddEvent(span, "cleanup.successful_completed",
+			attribute.Float64("duration_seconds", cleanupDuration.Seconds()),
+		)
+
+		if metrics != nil {
+			metrics.RecordHistoryLimitEvent(ctx, labels)
+		}
 	}
 
-	if hl.resourceFn.IsFailed(resource) {
-		logger.Debugw("failed - cleanup", "resource", hl.resourceFn.Type(), "namespace", resource.GetNamespace(), "name", resource.GetName())
-		return hl.DoFailedResourceCleanup(ctx, resource)
+	// Process cleanup for failed resources
+	if hl.isFailedResource(resource) {
+		observability.AddEvent(span, "processing.failed_resource_cleanup")
+
+		cleanupStart := time.Now()
+		err := hl.DoFailedResourceCleanup(ctx, resource)
+		cleanupDuration := time.Since(cleanupStart)
+
+		if err != nil {
+			observability.RecordError(span, err, "failed_cleanup_error")
+			observability.AddEvent(span, "cleanup.failed_failed",
+				attribute.String("error", err.Error()),
+				attribute.Float64("duration_seconds", cleanupDuration.Seconds()),
+			)
+			if metrics != nil {
+				labels.Reason = "failed_cleanup_error"
+				metrics.RecordResourceError(ctx, labels, "failed_cleanup")
+			}
+			return err
+		}
+
+		observability.AddEvent(span, "cleanup.failed_completed",
+			attribute.Float64("duration_seconds", cleanupDuration.Seconds()),
+		)
+
+		if metrics != nil {
+			metrics.RecordHistoryLimitEvent(ctx, labels)
+		}
 	}
+
+	observability.RecordSuccess(span)
+	logger.Debugw("History limit processing completed successfully",
+		"resource", hl.resourceFn.Type(),
+		"namespace", resource.GetNamespace(),
+		"name", resource.GetName(),
+		"successful", hl.isSuccessfulResource(resource),
+		"failed", hl.isFailedResource(resource),
+	)
 
 	return nil
 }
@@ -183,180 +265,225 @@ func (hl *HistoryLimiter) DoFailedResourceCleanup(ctx context.Context, resource 
 	return hl.doResourceCleanup(ctx, resource, AnnotationFailedHistoryLimit, hl.resourceFn.GetFailedHistoryLimitCount, hl.isFailedResource)
 }
 
+// isFailedResource checks if a resource has failed
 func (hl *HistoryLimiter) isFailedResource(resource metav1.Object) bool {
-	return hl.resourceFn.IsCompleted(resource) && hl.resourceFn.IsFailed(resource)
+	return hl.resourceFn.IsFailed(resource)
 }
 
+// isSuccessfulResource checks if a resource is successful
 func (hl *HistoryLimiter) isSuccessfulResource(resource metav1.Object) bool {
-	return hl.resourceFn.IsCompleted(resource) && hl.resourceFn.IsSuccessful(resource)
+	return hl.resourceFn.IsSuccessful(resource)
 }
 
+// doResourceCleanup handles cleanup for a resource based on the provided filter function
 func (hl *HistoryLimiter) doResourceCleanup(ctx context.Context, resource metav1.Object, historyLimitAnnotation string, getHistoryLimitFn func(string, string, SelectorSpec) (*int32, string), getResourceFilterFn func(metav1.Object) bool) error {
+	metrics := observability.GetGlobalMetrics()
+
+	// Start cleanup span
+	ctx, span := observability.StartSpan(ctx, "history.cleanup",
+		attribute.String("resource.type", hl.resourceFn.Type()),
+		attribute.String("resource.name", resource.GetName()),
+		attribute.String("resource.namespace", resource.GetNamespace()),
+		attribute.String("cleanup.type", historyLimitAnnotation),
+	)
+	defer span.End()
+
+	labels := &observability.MetricLabels{
+		Namespace:    resource.GetNamespace(),
+		ResourceType: hl.resourceFn.Type(),
+		Reason:       historyLimitAnnotation,
+	}
+
 	logger := logging.FromContext(ctx)
 
-	// get the label key and resource name
+	// Obtain the resource name and selectors first
 	labelKey := getResourceNameLabelKey(resource, hl.resourceFn.GetDefaultLabelKey())
 	resourceName := getResourceName(resource, labelKey)
+	resourceSelectors := hl.getResourceSelectors(resource)
 
-	// Get Annotations and Labels
-	resourceAnnotations := resource.GetAnnotations()
-	resourceLabels := resource.GetLabels()
+	// Check the enforced configuration level
+	enforcedLevel := hl.resourceFn.GetEnforcedConfigLevel(resource.GetNamespace(), resourceName, resourceSelectors)
 
-	// Construct the selectors with both matchLabels and matchAnnotations
-	resourceSelectors := SelectorSpec{}
-	if len(resourceAnnotations) > 0 {
-		resourceSelectors.MatchAnnotations = resourceAnnotations
-	}
-	if len(resourceLabels) > 0 {
-		resourceSelectors.MatchLabels = resourceLabels
-	}
+	observability.AddEvent(span, "cleanup.config_check",
+		attribute.String("config.enforced_level", string(enforcedLevel)),
+		attribute.String("resource.name", resourceName),
+	)
 
-	// Get enforced config level first
-	enforcedConfigLevel := hl.resourceFn.GetEnforcedConfigLevel(resource.GetNamespace(), resourceName, resourceSelectors)
-	logger.Debugw("enforcedConfigLevel for the resource is", "resourceName", resourceName, "enforcedlevel", enforcedConfigLevel)
-
-	// Get configured history limit
-	var historyLimit *int32
-	var identifiedBy string
-	configHistoryLimit, configIdentifiedBy := getHistoryLimitFn(resource.GetNamespace(), resourceName, resourceSelectors)
-
-	// For resource-level enforcement, check annotation only if it matches config
-	annotations := resource.GetAnnotations()
-	if enforcedConfigLevel == EnforcedConfigLevelResource && len(annotations) != 0 && annotations[historyLimitAnnotation] != "" {
-		annotationLimit, err := strconv.Atoi(annotations[historyLimitAnnotation])
-		if err != nil {
-			logger.Errorw("error converting history limit annotation to int",
-				"resource", hl.resourceFn.Type(),
-				"namespace", resource.GetNamespace(),
-				"name", resource.GetName(),
-				"annotation", historyLimitAnnotation,
-				"value", annotations[historyLimitAnnotation],
-				zap.Error(err))
-			return err
+	// Get the history limit configuration
+	historyLimit, identifiedBy := getHistoryLimitFn(resource.GetNamespace(), resourceName, resourceSelectors)
+	if historyLimit == nil {
+		observability.AddEvent(span, "cleanup.no_limit_configured")
+		labels.Reason = "no_limit_configured"
+		if metrics != nil {
+			metrics.RecordResourceSkipped(ctx, labels, "no_limit_configured")
 		}
-		// Check bounds before converting to int32
-		if annotationLimit < 0 || annotationLimit > math.MaxInt32 {
-			logger.Errorw("history limit annotation value out of bounds for int32",
-				"resource", hl.resourceFn.Type(),
-				"namespace", resource.GetNamespace(),
-				"name", resource.GetName(),
-				"annotation", historyLimitAnnotation,
-				"value", annotationLimit)
-			return fmt.Errorf("history limit value %d is out of bounds for type int32", annotationLimit)
-		}
-
-		// Only use annotation value if it matches configured value
-		if configHistoryLimit != nil && annotationLimit == int(*configHistoryLimit) {
-			historyLimit = ptr.Int32(int32(annotationLimit))
-			identifiedBy = "identifiedBy_resource_ann"
-		} else {
-			historyLimit = configHistoryLimit
-			identifiedBy = configIdentifiedBy
-		}
-	} else {
-		historyLimit = configHistoryLimit
-		identifiedBy = configIdentifiedBy
-	}
-
-	logger.Debugw("historylimit for the resource", "resourcename", resourceName, "limit", historyLimit, "identifiedBy", identifiedBy)
-
-	if historyLimit == nil || *historyLimit < 0 {
+		observability.RecordSuccess(span)
 		return nil
 	}
 
-	// List Resources (using appropriate selector based on enforcement level and identifier)
-	var resources []metav1.Object
-	var err error
+	observability.AddEvent(span, "cleanup.limit_found",
+		attribute.Int("history.limit", int(*historyLimit)),
+		attribute.String("config.source", identifiedBy),
+	)
 
-	if enforcedConfigLevel == EnforcedConfigLevelResource {
-		switch identifiedBy {
-		case "identifiedBy_resource_name":
-			label := fmt.Sprintf("%s=%s", labelKey, resourceName)
-			resources, err = hl.resourceFn.List(ctx, resource.GetNamespace(), label)
-		case "identifiedBy_resource_ann":
-			labelSelector := ""
-			for k, v := range resourceAnnotations {
-				if labelSelector != "" {
-					labelSelector += ","
-				}
-				labelSelector += fmt.Sprintf("%s=%s", k, v)
-			}
-			resources, err = hl.resourceFn.List(ctx, resource.GetNamespace(), labelSelector)
-		case "identifiedBy_resource_label":
-			labelSelector := ""
-			for k, v := range resourceLabels {
-				if labelSelector != "" {
-					labelSelector += ","
-				}
-				labelSelector += fmt.Sprintf("%s=%s", k, v)
-			}
-			resources, err = hl.resourceFn.List(ctx, resource.GetNamespace(), labelSelector)
-		default:
-			resources, err = hl.resourceFn.List(ctx, resource.GetNamespace(), "")
-		}
-	} else {
-		// For namespace or global level, list all resources in namespace
-		resources, err = hl.resourceFn.List(ctx, resource.GetNamespace(), "")
-	}
+	// Fetch all resources matching the criteria
+	listStart := time.Now()
+	resources, err := hl.resourceFn.List(ctx, resource.GetNamespace(), fmt.Sprintf("%s=%s", labelKey, resourceName))
+	listDuration := time.Since(listStart)
 
 	if err != nil {
+		observability.RecordError(span, err, "resource_list_error")
+		observability.AddEvent(span, "cleanup.list_failed",
+			attribute.String("error", err.Error()),
+			attribute.Float64("duration_seconds", listDuration.Seconds()),
+		)
 		return err
 	}
 
-	// Filter resources by status (success/failed)
-	resourcesFiltered := []metav1.Object{}
+	observability.AddEvent(span, "cleanup.resources_listed",
+		attribute.Int("resource.count", len(resources)),
+		attribute.Float64("duration_seconds", listDuration.Seconds()),
+	)
+
+	// Filter resources by completion status and type (successful/failed)
+	var completedResources []metav1.Object
 	for _, res := range resources {
-		if getResourceFilterFn(res) {
-			resourcesFiltered = append(resourcesFiltered, res)
+		if hl.resourceFn.IsCompleted(res) && getResourceFilterFn(res) {
+			completedResources = append(completedResources, res)
 		}
 	}
-	resources = resourcesFiltered
 
-	if int(*historyLimit) > len(resources) {
+	observability.AddEvent(span, "cleanup.resources_filtered",
+		attribute.Int("completed.count", len(completedResources)),
+	)
+
+	// Check if cleanup is needed
+	if len(completedResources) <= int(*historyLimit) {
+		observability.AddEvent(span, "cleanup.within_limit",
+			attribute.Int("current.count", len(completedResources)),
+			attribute.Int("limit", int(*historyLimit)),
+		)
+		labels.Reason = "within_limit"
+		if metrics != nil {
+			metrics.RecordResourceSkipped(ctx, labels, "within_limit")
+		}
+		observability.RecordSuccess(span)
 		return nil
 	}
 
-	// Sort resources by creation timestamp (newest first)
-	slices.SortStableFunc(resources, func(a, b metav1.Object) int {
-		objA := a.GetCreationTimestamp()
-		objB := b.GetCreationTimestamp()
-		if objA.Time.Before(objB.Time) {
-			return 1
-		} else if objA.Time.After(objB.Time) {
-			return -1
-		}
-		return 0
+	// Sort resources by creation timestamp (oldest first)
+	sort.Slice(completedResources, func(i, j int) bool {
+		return completedResources[i].GetCreationTimestamp().Time.Before(completedResources[j].GetCreationTimestamp().Time)
 	})
 
-	// Select resources to delete (keep newest up to historyLimit)
-	var selectionForDeletion []metav1.Object
-	if *historyLimit == 0 {
-		selectionForDeletion = resources
-	} else {
-		selectionForDeletion = resources[*historyLimit:]
-	}
+	// Calculate how many resources to delete
+	resourcesToDelete := len(completedResources) - int(*historyLimit)
 
-	// Delete selected resources
-	for _, res := range selectionForDeletion {
-		logger.Debugw("deleting resource",
+	observability.AddEvent(span, "cleanup.deletion_required",
+		attribute.Int("resources.to_delete", resourcesToDelete),
+		attribute.Int("current.count", len(completedResources)),
+		attribute.Int("limit", int(*historyLimit)),
+	)
+
+	// Delete excess resources
+	deletedCount := 0
+	for i := 0; i < resourcesToDelete; i++ {
+		res := completedResources[i]
+
+		deleteStart := time.Now()
+		err := hl.resourceFn.Delete(ctx, res.GetNamespace(), res.GetName())
+		deleteDuration := time.Since(deleteStart)
+
+		if err != nil {
+			if errors.IsNotFound(err) {
+				// Resource already deleted, continue
+				observability.AddEvent(span, "cleanup.resource_already_deleted",
+					attribute.String("resource.name", res.GetName()),
+				)
+				continue
+			}
+
+			observability.RecordError(span, err, "resource_delete_error")
+			observability.AddEvent(span, "cleanup.delete_failed",
+				attribute.String("resource.name", res.GetName()),
+				attribute.String("error", err.Error()),
+				attribute.Float64("duration_seconds", deleteDuration.Seconds()),
+			)
+
+			if metrics != nil {
+				resourceLabels := &observability.MetricLabels{
+					Namespace:    res.GetNamespace(),
+					ResourceType: hl.resourceFn.Type(),
+					Reason:       "deletion_error",
+				}
+				metrics.RecordResourceDeleteError(ctx, resourceLabels, "history_cleanup")
+			}
+
+			return fmt.Errorf("failed to delete resource %s/%s: %w", res.GetNamespace(), res.GetName(), err)
+		}
+
+		deletedCount++
+
+		// Calculate resource age for metrics
+		var resourceAge float64
+		if !res.GetCreationTimestamp().Time.IsZero() {
+			resourceAge = time.Since(res.GetCreationTimestamp().Time).Seconds()
+		}
+
+		observability.AddEvent(span, "cleanup.resource_deleted",
+			attribute.String("resource.name", res.GetName()),
+			attribute.Float64("resource_age_seconds", resourceAge),
+			attribute.Float64("duration_seconds", deleteDuration.Seconds()),
+		)
+
+		if metrics != nil {
+			resourceLabels := &observability.MetricLabels{
+				Namespace:    res.GetNamespace(),
+				ResourceType: hl.resourceFn.Type(),
+				Reason:       "history_limit",
+				Status:       "deleted",
+			}
+			metrics.RecordResourceDeleted(ctx, resourceLabels, resourceAge)
+			metrics.RecordResourceCleanedByHistory(ctx, resourceLabels)
+			metrics.RecordResourceDeletionDuration(ctx, resourceLabels, deleteDuration)
+		}
+
+		logger.Debugw("Resource deleted due to history limit",
 			"resource", hl.resourceFn.Type(),
 			"namespace", res.GetNamespace(),
 			"name", res.GetName(),
-			"creationTimestamp", res.GetCreationTimestamp(),
+			"age", resourceAge,
+			"historyLimit", *historyLimit,
 		)
-		if err := hl.resourceFn.Delete(ctx, res.GetNamespace(), res.GetName()); err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			logger.Errorw("error deleting resource",
-				"resource", hl.resourceFn.Type(),
-				"namespace", res.GetNamespace(),
-				"name", res.GetName(),
-				zap.Error(err),
-			)
-			return err
-		}
 	}
 
+	observability.AddEvent(span, "cleanup.completed",
+		attribute.Int("resources.deleted", deletedCount),
+		attribute.Int("resources.remaining", len(completedResources)-deletedCount),
+	)
+
+	observability.RecordSuccess(span)
+
+	logger.Infow("History-based cleanup completed",
+		"resource", hl.resourceFn.Type(),
+		"namespace", resource.GetNamespace(),
+		"historyLimit", *historyLimit,
+		"totalCompleted", len(completedResources),
+		"deleted", deletedCount,
+		"remaining", len(completedResources)-deletedCount,
+	)
+
 	return nil
+}
+
+// getResourceSelectors constructs the selector spec for a resource
+func (hl *HistoryLimiter) getResourceSelectors(resource metav1.Object) SelectorSpec {
+	selectors := SelectorSpec{}
+	if annotations := resource.GetAnnotations(); len(annotations) > 0 {
+		selectors.MatchAnnotations = annotations
+	}
+	if labels := resource.GetLabels(); len(labels) > 0 {
+		selectors.MatchLabels = labels
+	}
+	return selectors
 }
