@@ -72,8 +72,12 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, pr *pipelinev1.PipelineR
 	}
 
 	// Add event to trace
+	pipelineName := ""
+	if pr.Spec.PipelineRef != nil {
+		pipelineName = pr.Spec.PipelineRef.Name
+	}
 	observability.AddEvent(span, "reconciliation.started",
-		attribute.String("pipeline.name", pr.Spec.PipelineRef.Name),
+		attribute.String("pipeline.name", pipelineName),
 		attribute.String("status.phase", string(pr.Status.GetCondition(apis.ConditionSucceeded).Status)),
 	)
 

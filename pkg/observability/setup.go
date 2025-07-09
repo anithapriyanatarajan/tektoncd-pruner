@@ -431,12 +431,17 @@ func stringMapToAttributes(m map[string]string) []attribute.KeyValue {
 func InitializeKnativeMetrics(ctx context.Context) error {
 	logger := logging.FromContext(ctx)
 
-	// Initialize the existing Knative metrics system with default options
-	exporterOptions := metrics.ExporterOptions{}
+	// Initialize the existing Knative metrics system with proper component name
+	exporterOptions := metrics.ExporterOptions{
+		Component:      "tekton-pruner-controller",
+		Domain:         "pruner.tekton.dev",
+		PrometheusPort: 9090,
+	}
+
 	if err := metrics.UpdateExporter(ctx, exporterOptions, logger); err != nil {
 		return fmt.Errorf("failed to update metrics exporter: %w", err)
 	}
 
-	logger.Info("Knative metrics system initialized")
+	logger.Info("Knative metrics system initialized with component: tekton-pruner-controller")
 	return nil
 }

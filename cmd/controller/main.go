@@ -15,6 +15,7 @@ import (
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/pipelinerun"
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/taskrun"
 	"github.com/openshift-pipelines/tektoncd-pruner/pkg/reconciler/tektonpruner"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
 	"knative.dev/pkg/controller"
@@ -102,12 +103,8 @@ func main() {
 				mux.Handle("/metrics", metricsHandler)
 			} else {
 				// Use default Prometheus handler for newer OpenTelemetry versions
-				mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					// Use the default Prometheus registry
-					w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-					w.WriteHeader(http.StatusOK)
-					w.Write([]byte("# Metrics endpoint - OpenTelemetry metrics available\n"))
-				}))
+				// Import promhttp to use the default Prometheus registry
+				mux.Handle("/metrics", promhttp.Handler())
 			}
 
 			mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -131,10 +128,12 @@ func main() {
 		}()
 	}
 
-	// Initialize Knative metrics for backward compatibility
+	// Initialize Knative metrics for backward compatibility (optional)
 	if err := observability.InitializeKnativeMetrics(ctx); err != nil {
-		logger.Errorf("Failed to initialize Knative metrics: %v", err)
-		// Don't fail here, as this is for backward compatibility
+		logger.Warnf("Failed to initialize Knative metrics (non-fatal): %v", err)
+		// Don't fail here, as OpenTelemetry is our primary metrics system
+	} else {
+		logger.Info("Knative metrics system initialized successfully")
 	}
 
 	// Add namespaces

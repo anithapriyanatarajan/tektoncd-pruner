@@ -44,14 +44,22 @@ bin/%: cmd/% FORCE
 KO = $(or ${KO_BIN},${KO_BIN},$(BIN)/ko)
 $(BIN)/ko: PACKAGE=github.com/google/ko@latest
 
-.PHONY: apply
-apply: | $(KO) ; $(info $(M) ko apply core manifests (excluding optional/)) @ ## Apply core config to the current cluster (excludes optional/)
+.PHONY: setup-env
+setup-env: ; $(info $(M) setting up development environment) @ ## Setup environment variables for Kind cluster
+	@echo "$(M) Setting up environment for Kind cluster..."
+	@echo "export KO_DOCKER_REPO=localhost:5000" > .env
+	@echo "$(M) Environment setup complete. Run 'source .env' or use 'make apply-kind'"
+
+.PHONY: apply-kind
+apply-kind: | $(KO) ; $(info $(M) ko apply core manifests for Kind cluster) @ ## Apply core config to Kind cluster (sets KO_DOCKER_REPO automatically)
 	@echo "$(M) Checking kubectl connectivity..."
 	$Q kubectl cluster-info --request-timeout=10s > /dev/null || (echo "$(M) Error: kubectl not connected to cluster. Run 'make dev-setup' first or check your kubeconfig." && exit 1)
 	@echo "$(M) Verifying tekton-pipelines namespace exists..."
 	$Q kubectl get namespace tekton-pipelines > /dev/null || (echo "$(M) Error: tekton-pipelines namespace not found. Run 'make deploy-tekton' first." && exit 1)
+	@echo "$(M) Setting up environment for Kind cluster..."
+	@export KO_DOCKER_REPO=localhost:5000
 	@echo "$(M) Deploying tektoncd-pruner manifests..."
-	$Q $(KO) apply -f config/200-clusterrole.yaml \
+	$Q KO_DOCKER_REPO=localhost:5000 $(KO) apply -f config/200-clusterrole.yaml \
 		-f config/200-role.yaml \
 		-f config/200-serviceaccount.yaml \
 		-f config/201-clusterrolebinding.yaml \
@@ -128,6 +136,26 @@ logs-tekton: ; $(info $(M) showing Tekton Pipelines logs) @ ## Show Tekton Pipel
 	$Q kubectl logs -l app=tekton-pipelines-controller -n tekton-pipelines --tail=20 2>/dev/null || echo "  Tekton Pipelines Controller not running"
 	@echo "$(M) Tekton Pipelines Webhook logs:"
 	$Q kubectl logs -l app=tekton-pipelines-webhook -n tekton-pipelines --tail=20 2>/dev/null || echo "  Tekton Pipelines Webhook not running"
+
+.PHONY: apply
+apply: | $(KO) ; $(info $(M) ko apply core manifests (excluding optional/)) @ ## Apply core config to the current cluster (excludes optional/)
+	@echo "$(M) Checking kubectl connectivity..."
+	$Q kubectl cluster-info --request-timeout=10s > /dev/null || (echo "$(M) Error: kubectl not connected to cluster. Run 'make dev-setup' first or check your kubeconfig." && exit 1)
+	@echo "$(M) Verifying tekton-pipelines namespace exists..."
+	$Q kubectl get namespace tekton-pipelines > /dev/null || (echo "$(M) Error: tekton-pipelines namespace not found. Run 'make deploy-tekton' first." && exit 1)
+	@echo "$(M) Deploying tektoncd-pruner manifests..."
+	$Q $(KO) apply -f config/200-clusterrole.yaml \
+		-f config/200-role.yaml \
+		-f config/200-serviceaccount.yaml \
+		-f config/201-clusterrolebinding.yaml \
+		-f config/201-rolebinding.yaml \
+		-f config/600-tekton-pruner-default-spec.yaml \
+		-f config/config-info.yaml \
+		-f config/config-logging.yaml \
+		-f config/config-observability.yaml \
+		-f config/controller.yaml \
+		-f config/metrics-service.yaml
+	@echo "$(M) tektoncd-pruner deployed successfully!"
 
 .PHONY: deploy-all-with-monitoring
 deploy-all-with-monitoring: deploy-tekton apply deploy-monitoring ; $(info $(M) deploying Tekton + tektoncd-pruner + monitoring stack) @ ## Deploy Tekton Pipelines + tektoncd-pruner + monitoring stack
