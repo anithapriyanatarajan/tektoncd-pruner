@@ -46,6 +46,11 @@ $(BIN)/ko: PACKAGE=github.com/google/ko@latest
 
 .PHONY: apply
 apply: | $(KO) ; $(info $(M) ko apply core manifests (excluding optional/)) @ ## Apply core config to the current cluster (excludes optional/)
+	@echo "$(M) Checking kubectl connectivity..."
+	$Q kubectl cluster-info --request-timeout=10s > /dev/null || (echo "$(M) Error: kubectl not connected to cluster. Run 'make dev-setup' first or check your kubeconfig." && exit 1)
+	@echo "$(M) Verifying tekton-pipelines namespace exists..."
+	$Q kubectl get namespace tekton-pipelines > /dev/null || (echo "$(M) Error: tekton-pipelines namespace not found. Run 'make deploy-tekton' first." && exit 1)
+	@echo "$(M) Deploying tektoncd-pruner manifests..."
 	$Q $(KO) apply -f config/200-clusterrole.yaml \
 		-f config/200-role.yaml \
 		-f config/200-serviceaccount.yaml \
@@ -57,10 +62,17 @@ apply: | $(KO) ; $(info $(M) ko apply core manifests (excluding optional/)) @ ##
 		-f config/config-observability.yaml \
 		-f config/controller.yaml \
 		-f config/metrics-service.yaml
+	@echo "$(M) tektoncd-pruner deployed successfully!"
 
 .PHONY: apply-all
 apply-all: | $(KO) ; $(info $(M) ko apply all manifests (including optional/)) @ ## Apply all config to the current cluster (includes optional/)
+	@echo "$(M) Checking kubectl connectivity..."
+	$Q kubectl cluster-info --request-timeout=10s > /dev/null || (echo "$(M) Error: kubectl not connected to cluster. Run 'make dev-setup' first or check your kubeconfig." && exit 1)
+	@echo "$(M) Verifying tekton-pipelines namespace exists..."
+	$Q kubectl get namespace tekton-pipelines > /dev/null || (echo "$(M) Error: tekton-pipelines namespace not found. Run 'make deploy-tekton' first." && exit 1)
+	@echo "$(M) Deploying all tektoncd-pruner manifests..."
 	$Q $(KO) apply -R -f config
+	@echo "$(M) All tektoncd-pruner manifests deployed successfully!"
 
 .PHONY: apply-optional
 apply-optional: | $(KO) ; $(info $(M) ko apply optional manifests only) @ ## Apply only optional manifests (requires additional components)
@@ -79,11 +91,22 @@ deploy-monitoring: ; $(info $(M) deploying monitoring stack (Prometheus + Grafan
 # Tekton deployment targets
 .PHONY: deploy-tekton
 deploy-tekton: ; $(info $(M) deploying Tekton Pipelines) @ ## Deploy Tekton Pipelines to the current cluster
+	@echo "$(M) Checking kubectl connectivity..."
+	$Q kubectl cluster-info --request-timeout=10s > /dev/null || (echo "$(M) Error: kubectl not connected to cluster. Run 'make dev-setup' first or check your kubeconfig." && exit 1)
+	@echo "$(M) Applying Tekton Pipelines manifests..."
 	$Q kubectl apply --filename https://storage.googleapis.com/tekton-releases/pipeline/latest/release.yaml
+	@echo "$(M) Waiting for tekton-pipelines namespace to be created..."
+	$Q kubectl get namespace tekton-pipelines > /dev/null 2>&1 || (sleep 5 && kubectl get namespace tekton-pipelines > /dev/null)
 	@echo "$(M) Waiting for Tekton Pipelines to be ready..."
 	$Q kubectl wait --for=condition=Ready pod -l app=tekton-pipelines-controller -n tekton-pipelines --timeout=300s
 	$Q kubectl wait --for=condition=Ready pod -l app=tekton-pipelines-webhook -n tekton-pipelines --timeout=300s
 	@echo "$(M) Tekton Pipelines deployed successfully!"
+
+.PHONY: verify-cluster
+verify-cluster: ; $(info $(M) verifying cluster connectivity) @ ## Verify kubectl cluster connectivity
+	@echo "$(M) Checking kubectl connectivity..."
+	$Q kubectl cluster-info --request-timeout=10s > /dev/null || (echo "$(M) Error: kubectl not connected to cluster. Please check your kubeconfig or run 'make dev-setup' to create a Kind cluster." && exit 1)
+	@echo "$(M) Cluster connectivity verified!"
 
 .PHONY: clean-tekton
 clean-tekton: ; $(info $(M) removing Tekton Pipelines) @ ## Remove Tekton Pipelines from the current cluster
@@ -184,7 +207,7 @@ dev-setup: # setup kind with local registry for local development
 	@cd ./hack/dev/kind/;./install.sh
 
 .PHONY: dev-setup-with-monitoring
-dev-setup-with-monitoring: dev-setup deploy-all-with-monitoring ; $(info $(M) complete dev setup with Tekton + tektoncd-pruner + monitoring) @ ## Setup kind cluster + Tekton Pipelines + tektoncd-pruner + monitoring
+dev-setup-with-monitoring: dev-setup verify-cluster deploy-all-with-monitoring ; $(info $(M) complete dev setup with Tekton + tektoncd-pruner + monitoring) @ ## Setup kind cluster + Tekton Pipelines + tektoncd-pruner + monitoring
 	@echo "$(M) Development environment ready!"
 	@echo "$(M) Tekton Pipelines: kubectl get pods -n tekton-pipelines"
 	@echo "$(M) tektoncd-pruner: kubectl get pods -n tekton-pipelines -l app=controller"
@@ -192,10 +215,33 @@ dev-setup-with-monitoring: dev-setup deploy-all-with-monitoring ; $(info $(M) co
 	@echo "$(M) Grafana: kubectl port-forward svc/grafana 3000:3000 -n monitoring"
 
 .PHONY: dev-setup-minimal
-dev-setup-minimal: dev-setup deploy-tekton-with-pruner ; $(info $(M) minimal dev setup with Tekton + tektoncd-pruner) @ ## Setup kind cluster + Tekton Pipelines + tektoncd-pruner (no monitoring)
+dev-setup-minimal: dev-setup verify-cluster deploy-tekton-with-pruner ; $(info $(M) minimal dev setup with Tekton + tektoncd-pruner) @ ## Setup kind cluster + Tekton Pipelines + tektoncd-pruner (no monitoring)
 	@echo "$(M) Minimal development environment ready!"
 	@echo "$(M) Tekton Pipelines: kubectl get pods -n tekton-pipelines"
 	@echo "$(M) tektoncd-pruner: kubectl get pods -n tekton-pipelines -l app=controller"
+
+.PHONY: debug-cluster
+debug-cluster: ; $(info $(M) debugging cluster state) @ ## Debug cluster connectivity and state
+	@echo "$(M) === Cluster Debug Information ==="
+	@echo "$(M) 1. Checking kubectl version..."
+	$Q kubectl version --client || echo "  kubectl not found or not working"
+	@echo "$(M) 2. Checking cluster connectivity..."
+	$Q kubectl cluster-info --request-timeout=10s || echo "  No cluster connection"
+	@echo "$(M) 3. Checking current context..."
+	$Q kubectl config current-context || echo "  No current context"
+	@echo "$(M) 4. Checking available contexts..."
+	$Q kubectl config get-contexts || echo "  No contexts available"
+	@echo "$(M) 5. Checking Kind clusters..."
+	$Q kind get clusters 2>/dev/null || echo "  Kind not available or no clusters"
+	@echo "$(M) 6. Checking namespaces..."
+	$Q kubectl get namespaces 2>/dev/null || echo "  Cannot list namespaces"
+	@echo "$(M) === End Debug Information ==="
+
+.PHONY: dev-cleanup
+dev-cleanup: ; $(info $(M) cleaning up development environment) @ ## Clean up Kind cluster and reset development environment
+	@echo "$(M) Removing Kind cluster if it exists..."
+	$Q kind delete cluster --name kind 2>/dev/null || echo "  No Kind cluster to delete"
+	@echo "$(M) Development environment cleaned up"
 
 #Release
 RELEASE_VERSION=v0.0.0
