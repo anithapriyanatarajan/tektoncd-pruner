@@ -11,6 +11,7 @@ import (
 
 	pipelineversioned "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	pipelinerunreconciler "github.com/tektoncd/pipeline/pkg/client/injection/reconciler/pipeline/v1/pipelinerun"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,19 +40,26 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, pr *pipelinev1.PipelineR
 
 	// Start timing the reconciliation
 	metricsRecorder := metrics.GetRecorder()
-	reconcileTimer := metricsRecorder.NewTimer(metrics.ResourceAttributes(metrics.ResourceTypePipelineRun, pr.Namespace)...)
+	reconcileTimer := metricsRecorder.NewTimer(
+		attribute.String("resource_type", metrics.ResourceTypePipelineRun),
+		attribute.String("namespace", pr.Namespace),
+	)
 	defer reconcileTimer.RecordReconciliationDuration(ctx)
 
-	// Record that we processed a resource
+	// Record that we processed a resource (unique per resource)
 	status := metrics.StatusSuccess
 	defer func() {
-		metricsRecorder.RecordResourceProcessed(ctx, metrics.ResourceTypePipelineRun, pr.Namespace, status)
+		metricsRecorder.RecordUniqueResourceProcessed(ctx, metrics.ResourceTypePipelineRun, pr.Namespace, pr.Name, status)
 	}()
 
 	// execute the history limiter earlier than the ttl handler
 
 	// execute history limit action
-	historyTimer := metricsRecorder.NewTimer(metrics.OperationAttributes(metrics.ResourceTypePipelineRun, pr.Namespace, metrics.OperationHistory)...)
+	historyTimer := metricsRecorder.NewTimer(
+		attribute.String("resource_type", metrics.ResourceTypePipelineRun),
+		attribute.String("namespace", pr.Namespace),
+		attribute.String("operation", metrics.OperationHistory),
+	)
 	err := r.historyLimiter.ProcessEvent(ctx, pr)
 	historyTimer.RecordHistoryProcessingDuration(ctx)
 
@@ -64,7 +72,11 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, pr *pipelinev1.PipelineR
 	}
 
 	// execute ttl handler
-	ttlTimer := metricsRecorder.NewTimer(metrics.OperationAttributes(metrics.ResourceTypePipelineRun, pr.Namespace, metrics.OperationTTL)...)
+	ttlTimer := metricsRecorder.NewTimer(
+		attribute.String("resource_type", metrics.ResourceTypePipelineRun),
+		attribute.String("namespace", pr.Namespace),
+		attribute.String("operation", metrics.OperationTTL),
+	)
 	err = r.ttlHandler.ProcessEvent(ctx, pr)
 	ttlTimer.RecordTTLProcessingDuration(ctx)
 

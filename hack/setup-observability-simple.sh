@@ -75,11 +75,17 @@ data:
   prometheus.yml: |
     global:
       scrape_interval: 15s
+      # Use legacy metric naming to prevent underscore-to-dot conversion
+      metric_name_validation_scheme: legacy
     scrape_configs:
     - job_name: 'tekton-pruner'
+      # Use legacy metric escaping for this job to preserve underscores
+      metric_name_escaping_scheme: underscores
       static_configs:
-      - targets: ['tekton-pruner-controller.tekton-pipelines.svc.cluster.local:9090']
+      - targets: ['tekton-pruner-controller.tekton-pipelines.svc.cluster.local:9090','tekton-pipelines-controller.tekton-pipelines.svc.cluster.local:9090']
     - job_name: 'kubernetes-pods'
+      # Use legacy metric escaping for this job to preserve underscores
+      metric_name_escaping_scheme: underscores
       kubernetes_sd_configs:
       - role: pod
         namespaces:
@@ -230,7 +236,7 @@ echo "  Jaeger: http://localhost:16686"
 echo "  Pruner Metrics: http://localhost:9090/metrics"
 echo ""
 echo "Test metrics:"
-echo "  curl http://localhost:9090/metrics | grep -E 'tektoncd_pruner_'"
+echo "  curl http://localhost:9090/metrics | grep -E 'tekton_pruner_controller_'"
 echo ""
 echo "Troubleshooting:"
 echo "  kubectl logs -n tekton-pipelines -l app.kubernetes.io/name=controller"

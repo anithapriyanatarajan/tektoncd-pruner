@@ -376,7 +376,7 @@ func (hl *HistoryLimiter) doResourceCleanup(ctx context.Context, resource metav1
 		}
 
 		// Record successful deletion
-		metricsRecorder.RecordResourceDeleted(ctx, resourceType, res.GetNamespace(), metrics.OperationHistory, resourceAge)
+		metricsRecorder.RecordResourceDeleted(ctx, resourceType, res.GetNamespace(), metrics.OperationHistory, res.GetName(), resourceAge)
 	}
 
 	return nil

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
@@ -48,19 +49,19 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *pipelinev1.TaskRun) 
 
 	// Start timing the reconciliation
 	metricsRecorder := metrics.GetRecorder()
-	reconcileTimer := metricsRecorder.NewTimer(metrics.ResourceAttributes(metrics.ResourceTypeTaskRun, tr.Namespace)...)
+	reconcileTimer := metricsRecorder.NewTimer(attribute.String("resource_type", metrics.ResourceTypeTaskRun), attribute.String("namespace", tr.Namespace))
 	defer reconcileTimer.RecordReconciliationDuration(ctx)
 
-	// Record that we processed a resource
+	// Record that we processed a resource (unique per resource)
 	status := metrics.StatusSuccess
 	defer func() {
-		metricsRecorder.RecordResourceProcessed(ctx, metrics.ResourceTypeTaskRun, tr.Namespace, status)
+		metricsRecorder.RecordUniqueResourceProcessed(ctx, metrics.ResourceTypeTaskRun, tr.Namespace, tr.Name, status)
 	}()
 
 	// execute the history limiter earlier than the ttl handler
 
 	// execute history limit action
-	historyTimer := metricsRecorder.NewTimer(metrics.OperationAttributes(metrics.ResourceTypeTaskRun, tr.Namespace, metrics.OperationHistory)...)
+	historyTimer := metricsRecorder.NewTimer(attribute.String("resource_type", metrics.ResourceTypeTaskRun), attribute.String("namespace", tr.Namespace), attribute.String("operation", metrics.OperationHistory))
 	err := r.historyLimiter.ProcessEvent(ctx, tr)
 	historyTimer.RecordHistoryProcessingDuration(ctx)
 
@@ -76,7 +77,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *pipelinev1.TaskRun) 
 	}
 
 	// execute ttl handler
-	ttlTimer := metricsRecorder.NewTimer(metrics.OperationAttributes(metrics.ResourceTypeTaskRun, tr.Namespace, metrics.OperationTTL)...)
+	ttlTimer := metricsRecorder.NewTimer(attribute.String("resource_type", metrics.ResourceTypeTaskRun), attribute.String("namespace", tr.Namespace), attribute.String("operation", metrics.OperationTTL))
 	err = r.ttlHandler.ProcessEvent(ctx, tr)
 	ttlTimer.RecordTTLProcessingDuration(ctx)
 

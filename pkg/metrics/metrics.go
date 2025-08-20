@@ -18,6 +18,7 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -29,62 +30,53 @@ import (
 
 const (
 	// Metric names
-	MetricResourcesProcessed        = "tektoncd_pruner_resources_processed_total"
-	MetricResourcesDeleted          = "tektoncd_pruner_resources_deleted_total"
-	MetricResourcesErrors           = "tektoncd_pruner_resources_errors_total"
-	MetricReconciliationDuration    = "tektoncd_pruner_reconciliation_duration_seconds"
-	MetricTTLProcessingDuration     = "tektoncd_pruner_ttl_processing_duration_seconds"
-	MetricHistoryProcessingDuration = "tektoncd_pruner_history_processing_duration_seconds"
-	MetricActiveResourcesCount      = "tektoncd_pruner_active_resources_count"
-	MetricPendingDeletionsCount     = "tektoncd_pruner_pending_deletions_count"
-	MetricResourceAgeAtDeletion     = "tektoncd_pruner_resource_age_at_deletion_seconds"
+	MetricResourcesProcessed        = "tekton_pruner_controller_resources_processed"
+	MetricResourcesDeleted          = "tekton_pruner_controller_resources_deleted"
+	MetricResourcesErrors           = "tekton_pruner_controller_resources_errors"
+	MetricReconciliationDuration    = "tekton_pruner_controller_reconciliation_duration"
+	MetricTTLProcessingDuration     = "tekton_pruner_controller_ttl_processing_duration"
+	MetricHistoryProcessingDuration = "tekton_pruner_controller_history_processing_duration"
+	MetricActiveResourcesCount      = "tekton_pruner_controller_active_resources"
+	MetricPendingDeletionsCount     = "tekton_pruner_controller_pending_deletions"
+	MetricResourceAgeAtDeletion     = "tekton_pruner_controller_resource_age_at_deletion"
+	MetricPipelineRunsProcessed     = "tekton_pruner_controller_pipelineruns_processed"
+	MetricTaskRunsProcessed         = "tekton_pruner_controller_taskruns_processed"
+	MetricPipelineRunsDeleted       = "tekton_pruner_controller_pipelineruns_deleted"
+	MetricTaskRunsDeleted           = "tekton_pruner_controller_taskruns_deleted"
+	MetricDeletionsByReason         = "tekton_pruner_controller_deletions_by_reason"
 
-	// Label keys
-	LabelNamespace    = "namespace"
-	LabelResourceType = "resource_type"
-	LabelStatus       = "status"
-	LabelReason       = "reason"
-	LabelErrorType    = "error_type"
-	LabelOperation    = "operation"
-
-	// Label values for resource types
+	// Resource types
 	ResourceTypePipelineRun = "pipelinerun"
 	ResourceTypeTaskRun     = "taskrun"
 
-	// Label values for operations
+	// Operations
 	OperationTTL     = "ttl"
 	OperationHistory = "history"
 
-	// Label values for status
+	// Status values
 	StatusSuccess = "success"
-	StatusFailed  = "failed"
 	StatusError   = "error"
 
-	// Label values for error types
-	ErrorTypeAPI        = "api_error"
-	ErrorTypeTimeout    = "timeout"
-	ErrorTypeValidation = "validation"
-	ErrorTypeInternal   = "internal"
-	ErrorTypeNotFound   = "not_found"
-	ErrorTypePermission = "permission"
+	// Deletion reasons
+	DeletionReasonTTL    = "ttl_expired"
+	DeletionReasonLimits = "history_limits"
 )
 
-// Recorder holds all the OpenTelemetry instruments for recording metrics
 type Recorder struct {
-	// Counters
-	resourcesProcessed metric.Int64Counter
-	resourcesDeleted   metric.Int64Counter
-	resourcesErrors    metric.Int64Counter
-
-	// Histograms for duration measurements
+	resourcesProcessed        metric.Int64Counter
+	resourcesDeleted          metric.Int64Counter
+	resourcesErrors           metric.Int64Counter
+	pipelineRunsProcessed     metric.Int64Counter
+	taskRunsProcessed         metric.Int64Counter
+	pipelineRunsDeleted       metric.Int64Counter
+	taskRunsDeleted           metric.Int64Counter
+	deletionsByReason         metric.Int64Counter
 	reconciliationDuration    metric.Float64Histogram
 	ttlProcessingDuration     metric.Float64Histogram
 	historyProcessingDuration metric.Float64Histogram
 	resourceAgeAtDeletion     metric.Float64Histogram
-
-	// UpDownCounters for gauge-like metrics
-	activeResourcesCount  metric.Int64UpDownCounter
-	pendingDeletionsCount metric.Int64UpDownCounter
+	activeResourcesCount      metric.Int64UpDownCounter
+	pendingDeletionsCount     metric.Int64UpDownCounter
 }
 
 var (
@@ -92,7 +84,6 @@ var (
 	once     sync.Once
 )
 
-// GetRecorder returns the singleton metrics recorder instance
 func GetRecorder() *Recorder {
 	once.Do(func() {
 		recorder = newRecorder()
@@ -100,74 +91,26 @@ func GetRecorder() *Recorder {
 	return recorder
 }
 
-// newRecorder creates and initializes a new metrics recorder with all instruments
 func newRecorder() *Recorder {
-	meter := otel.Meter("tektoncd-pruner")
-
+	meter := otel.Meter("tekton-pruner-controller")
 	r := &Recorder{}
 
-	// Initialize counters
-	r.resourcesProcessed, _ = meter.Int64Counter(
-		MetricResourcesProcessed,
-		metric.WithDescription("Total number of Tekton resources processed by the pruner"),
-		metric.WithUnit("1"),
-	)
+	r.resourcesProcessed, _ = meter.Int64Counter(MetricResourcesProcessed, metric.WithUnit("1"))
+	r.resourcesDeleted, _ = meter.Int64Counter(MetricResourcesDeleted, metric.WithUnit("1"))
+	r.resourcesErrors, _ = meter.Int64Counter(MetricResourcesErrors, metric.WithUnit("1"))
+	r.pipelineRunsProcessed, _ = meter.Int64Counter(MetricPipelineRunsProcessed, metric.WithUnit("1"))
+	r.taskRunsProcessed, _ = meter.Int64Counter(MetricTaskRunsProcessed, metric.WithUnit("1"))
+	r.pipelineRunsDeleted, _ = meter.Int64Counter(MetricPipelineRunsDeleted, metric.WithUnit("1"))
+	r.taskRunsDeleted, _ = meter.Int64Counter(MetricTaskRunsDeleted, metric.WithUnit("1"))
+	r.deletionsByReason, _ = meter.Int64Counter(MetricDeletionsByReason, metric.WithUnit("1"))
 
-	r.resourcesDeleted, _ = meter.Int64Counter(
-		MetricResourcesDeleted,
-		metric.WithDescription("Total number of Tekton resources deleted by the pruner"),
-		metric.WithUnit("1"),
-	)
+	r.reconciliationDuration, _ = meter.Float64Histogram(MetricReconciliationDuration, metric.WithUnit("s"))
+	r.ttlProcessingDuration, _ = meter.Float64Histogram(MetricTTLProcessingDuration, metric.WithUnit("s"))
+	r.historyProcessingDuration, _ = meter.Float64Histogram(MetricHistoryProcessingDuration, metric.WithUnit("s"))
+	r.resourceAgeAtDeletion, _ = meter.Float64Histogram(MetricResourceAgeAtDeletion, metric.WithUnit("s"))
 
-	r.resourcesErrors, _ = meter.Int64Counter(
-		MetricResourcesErrors,
-		metric.WithDescription("Total number of errors encountered while processing Tekton resources"),
-		metric.WithUnit("1"),
-	)
-
-	// Initialize histograms
-	r.reconciliationDuration, _ = meter.Float64Histogram(
-		MetricReconciliationDuration,
-		metric.WithDescription("Time spent in reconciliation loops"),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
-	)
-
-	r.ttlProcessingDuration, _ = meter.Float64Histogram(
-		MetricTTLProcessingDuration,
-		metric.WithDescription("Time spent processing TTL-based pruning"),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
-	)
-
-	r.historyProcessingDuration, _ = meter.Float64Histogram(
-		MetricHistoryProcessingDuration,
-		metric.WithDescription("Time spent processing history-based pruning"),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
-	)
-
-	r.resourceAgeAtDeletion, _ = meter.Float64Histogram(
-		MetricResourceAgeAtDeletion,
-		metric.WithDescription("Age of resources when they are deleted"),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(
-			60, 300, 600, 1800, 3600, 7200, 14400, 28800, 86400, 172800, 345600, 604800,
-		), // 1m, 5m, 10m, 30m, 1h, 2h, 4h, 8h, 1d, 2d, 4d, 1w
-	)
-
-	// Initialize up-down counters
-	r.activeResourcesCount, _ = meter.Int64UpDownCounter(
-		MetricActiveResourcesCount,
-		metric.WithDescription("Current number of active Tekton resources being tracked"),
-		metric.WithUnit("1"),
-	)
-
-	r.pendingDeletionsCount, _ = meter.Int64UpDownCounter(
-		MetricPendingDeletionsCount,
-		metric.WithDescription("Current number of resources pending deletion"),
-		metric.WithUnit("1"),
-	)
+	r.activeResourcesCount, _ = meter.Int64UpDownCounter(MetricActiveResourcesCount, metric.WithUnit("1"))
+	r.pendingDeletionsCount, _ = meter.Int64UpDownCounter(MetricPendingDeletionsCount, metric.WithUnit("1"))
 
 	return r
 }
@@ -207,36 +150,114 @@ func (t *Timer) RecordHistoryProcessingDuration(ctx context.Context) {
 }
 
 // RecordResourceProcessed increments the resources processed counter
+// Note: This counts reconciliation events, not unique resources
 func (r *Recorder) RecordResourceProcessed(ctx context.Context, resourceType, namespace, status string) {
+	// Record in general metric
 	labels := []attribute.KeyValue{
-		attribute.String(LabelResourceType, resourceType),
-		attribute.String(LabelNamespace, namespace),
-		attribute.String(LabelStatus, status),
+		attribute.String("resource_type", resourceType),
+		attribute.String("namespace", namespace),
+		attribute.String("status", status),
 	}
 	r.resourcesProcessed.Add(ctx, 1, metric.WithAttributes(labels...))
+
+	// Record in specific resource type metrics
+	specificLabels := []attribute.KeyValue{
+		attribute.String("namespace", namespace),
+		attribute.String("status", status),
+	}
+
+	switch resourceType {
+	case ResourceTypePipelineRun:
+		r.pipelineRunsProcessed.Add(ctx, 1, metric.WithAttributes(specificLabels...))
+	case ResourceTypeTaskRun:
+		r.taskRunsProcessed.Add(ctx, 1, metric.WithAttributes(specificLabels...))
+	}
+}
+
+// RecordUniqueResourceProcessed increments counters only once per unique resource
+func (r *Recorder) RecordUniqueResourceProcessed(ctx context.Context, resourceType, namespace, resourceName, status string) {
+	// Use deletion tracker for deduplication (reuse the existing mechanism)
+	tracker := GetDeletionTracker()
+	if !tracker.RecordDeletion(ctx, resourceType, namespace, fmt.Sprintf("processed-%s", resourceName)) {
+		// Already counted this resource processing, skip
+		return
+	}
+
+	// Record in general metric
+	labels := []attribute.KeyValue{
+		attribute.String("resource_type", resourceType),
+		attribute.String("namespace", namespace),
+		attribute.String("status", status),
+	}
+	r.resourcesProcessed.Add(ctx, 1, metric.WithAttributes(labels...))
+
+	// Record in specific resource type metrics
+	specificLabels := []attribute.KeyValue{
+		attribute.String("namespace", namespace),
+		attribute.String("status", status),
+	}
+
+	switch resourceType {
+	case ResourceTypePipelineRun:
+		r.pipelineRunsProcessed.Add(ctx, 1, metric.WithAttributes(specificLabels...))
+	case ResourceTypeTaskRun:
+		r.taskRunsProcessed.Add(ctx, 1, metric.WithAttributes(specificLabels...))
+	}
 }
 
 // RecordResourceDeleted increments the resources deleted counter and records age
-func (r *Recorder) RecordResourceDeleted(ctx context.Context, resourceType, namespace, operation string, resourceAge time.Duration) {
-	// Record deletion count
+// Uses deletion tracking to prevent double-counting when multiple workers
+// process the same resource concurrently
+func (r *Recorder) RecordResourceDeleted(ctx context.Context, resourceType, namespace, operation, resourceName string, resourceAge time.Duration) {
+	// Check if this deletion should be counted (prevents double-counting)
+	tracker := GetDeletionTracker()
+	if !tracker.RecordDeletion(ctx, resourceType, namespace, resourceName) {
+		return
+	}
+
+	// Record in general metrics
 	labels := []attribute.KeyValue{
-		attribute.String(LabelResourceType, resourceType),
-		attribute.String(LabelNamespace, namespace),
-		attribute.String(LabelOperation, operation),
+		attribute.String("resource_type", resourceType),
+		attribute.String("namespace", namespace),
+		attribute.String("operation", operation),
 	}
 	r.resourcesDeleted.Add(ctx, 1, metric.WithAttributes(labels...))
-
-	// Record resource age at deletion
 	r.resourceAgeAtDeletion.Record(ctx, resourceAge.Seconds(), metric.WithAttributes(labels...))
+
+	// Record in specific resource type metrics
+	specificLabels := []attribute.KeyValue{
+		attribute.String("namespace", namespace),
+		attribute.String("operation", operation),
+	}
+
+	switch resourceType {
+	case ResourceTypePipelineRun:
+		r.pipelineRunsDeleted.Add(ctx, 1, metric.WithAttributes(specificLabels...))
+	case ResourceTypeTaskRun:
+		r.taskRunsDeleted.Add(ctx, 1, metric.WithAttributes(specificLabels...))
+	}
+
+	// Record deletion by reason
+	deletionReason := DeletionReasonTTL
+	if operation == OperationHistory {
+		deletionReason = DeletionReasonLimits
+	}
+
+	reasonLabels := []attribute.KeyValue{
+		attribute.String("resource_type", resourceType),
+		attribute.String("namespace", namespace),
+		attribute.String("deletion_reason", deletionReason),
+	}
+	r.deletionsByReason.Add(ctx, 1, metric.WithAttributes(reasonLabels...))
 }
 
 // RecordResourceError increments the resources error counter
 func (r *Recorder) RecordResourceError(ctx context.Context, resourceType, namespace, errorType, reason string) {
 	labels := []attribute.KeyValue{
-		attribute.String(LabelResourceType, resourceType),
-		attribute.String(LabelNamespace, namespace),
-		attribute.String(LabelErrorType, errorType),
-		attribute.String(LabelReason, reason),
+		attribute.String("resource_type", resourceType),
+		attribute.String("namespace", namespace),
+		attribute.String("error_type", errorType),
+		attribute.String("reason", reason),
 	}
 	r.resourcesErrors.Add(ctx, 1, metric.WithAttributes(labels...))
 }
@@ -244,8 +265,8 @@ func (r *Recorder) RecordResourceError(ctx context.Context, resourceType, namesp
 // UpdateActiveResourcesCount updates the active resources gauge
 func (r *Recorder) UpdateActiveResourcesCount(ctx context.Context, resourceType, namespace string, delta int64) {
 	labels := []attribute.KeyValue{
-		attribute.String(LabelResourceType, resourceType),
-		attribute.String(LabelNamespace, namespace),
+		attribute.String("resource_type", resourceType),
+		attribute.String("namespace", namespace),
 	}
 	r.activeResourcesCount.Add(ctx, delta, metric.WithAttributes(labels...))
 }
@@ -253,39 +274,10 @@ func (r *Recorder) UpdateActiveResourcesCount(ctx context.Context, resourceType,
 // UpdatePendingDeletionsCount updates the pending deletions gauge
 func (r *Recorder) UpdatePendingDeletionsCount(ctx context.Context, resourceType, namespace string, delta int64) {
 	labels := []attribute.KeyValue{
-		attribute.String(LabelResourceType, resourceType),
-		attribute.String(LabelNamespace, namespace),
+		attribute.String("resource_type", resourceType),
+		attribute.String("namespace", namespace),
 	}
 	r.pendingDeletionsCount.Add(ctx, delta, metric.WithAttributes(labels...))
-}
-
-// Helper functions for creating common attribute sets
-
-// ResourceAttributes creates common resource-related attributes
-func ResourceAttributes(resourceType, namespace string) []attribute.KeyValue {
-	return []attribute.KeyValue{
-		attribute.String(LabelResourceType, resourceType),
-		attribute.String(LabelNamespace, namespace),
-	}
-}
-
-// ErrorAttributes creates error-related attributes
-func ErrorAttributes(resourceType, namespace, errorType, reason string) []attribute.KeyValue {
-	return []attribute.KeyValue{
-		attribute.String(LabelResourceType, resourceType),
-		attribute.String(LabelNamespace, namespace),
-		attribute.String(LabelErrorType, errorType),
-		attribute.String(LabelReason, reason),
-	}
-}
-
-// OperationAttributes creates operation-related attributes
-func OperationAttributes(resourceType, namespace, operation string) []attribute.KeyValue {
-	return []attribute.KeyValue{
-		attribute.String(LabelResourceType, resourceType),
-		attribute.String(LabelNamespace, namespace),
-		attribute.String(LabelOperation, operation),
-	}
 }
 
 // ClassifyError determines the error type based on the error
@@ -295,44 +287,17 @@ func ClassifyError(err error) string {
 	}
 
 	switch {
-	case isAPIError(err):
-		return ErrorTypeAPI
-	case isTimeoutError(err):
-		return ErrorTypeTimeout
-	case isValidationError(err):
-		return ErrorTypeValidation
-	case isNotFoundError(err):
-		return ErrorTypeNotFound
-	case isPermissionError(err):
-		return ErrorTypePermission
+	case errors.IsNotFound(err):
+		return "not_found"
+	case errors.IsTimeout(err) || errors.IsServerTimeout(err):
+		return "timeout"
+	case errors.IsInvalid(err) || errors.IsBadRequest(err):
+		return "validation"
+	case errors.IsForbidden(err) || errors.IsUnauthorized(err):
+		return "permission"
+	case errors.IsInternalError(err) || errors.IsServiceUnavailable(err):
+		return "api_error"
 	default:
-		return ErrorTypeInternal
+		return "internal"
 	}
-}
-
-// Helper functions to classify errors (can be expanded based on actual error types)
-
-func isAPIError(err error) bool {
-	// Check for Kubernetes API errors
-	return errors.IsInternalError(err) || errors.IsServerTimeout(err) || errors.IsServiceUnavailable(err)
-}
-
-func isTimeoutError(err error) bool {
-	// Check for timeout-related errors
-	return errors.IsTimeout(err) || errors.IsServerTimeout(err)
-}
-
-func isValidationError(err error) bool {
-	// Check for validation errors
-	return errors.IsInvalid(err) || errors.IsBadRequest(err)
-}
-
-func isNotFoundError(err error) bool {
-	// Check for not found errors
-	return errors.IsNotFound(err)
-}
-
-func isPermissionError(err error) bool {
-	// Check for permission/authorization errors
-	return errors.IsForbidden(err) || errors.IsUnauthorized(err)
 }

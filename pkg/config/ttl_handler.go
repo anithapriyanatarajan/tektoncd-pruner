@@ -286,7 +286,7 @@ func (th *TTLHandler) removeResource(ctx context.Context, resource metav1.Object
 
 	// Record successful deletion
 	metricsRecorder := metrics.GetRecorder()
-	metricsRecorder.RecordResourceDeleted(ctx, resourceType, resource.GetNamespace(), metrics.OperationTTL, resourceAge)
+	metricsRecorder.RecordResourceDeleted(ctx, resourceType, resource.GetNamespace(), metrics.OperationTTL, resource.GetName(), resourceAge)
 
 	return nil
 }

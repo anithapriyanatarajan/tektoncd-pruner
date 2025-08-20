@@ -26,6 +26,12 @@ data:
   metrics-endpoint: ":9090"
   tracing-protocol: "none"
   
+  # Tekton Pruner specific metrics configuration
+  metrics.enabled: "true"
+  metrics.path: "/metrics"
+  metrics.runtime-enabled: "true"
+  metrics.shutdown-timeout: "30s"
+  
   # Legacy format for backward compatibility - TODO: Remove these after confirming new format works everywhere
   metrics.backend-destination: "prometheus"
   metrics.request-metrics-backend-destination: "prometheus"

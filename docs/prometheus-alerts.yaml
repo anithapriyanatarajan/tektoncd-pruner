@@ -1,0 +1,169 @@
+# Tekton Pruner Alerting Rules
+
+groups:
+  - name: tekton-pruner.rules
+    rules:
+      # High Error Rate Alert
+      - alert: TektonPrunerHighErrorRate
+        expr: rate(tektoncd_pruner_resources_errors_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          component: tekton-pruner
+        annotations:
+          summary: "Tekton Pruner experiencing high error rate"
+          description: "The Tekton Pruner has an error rate of {{ $value }} errors per second for namespace {{ $labels.namespace }} and resource type {{ $labels.resource_type }}"
+
+      # Critical Error Rate Alert
+      - alert: TektonPrunerCriticalErrorRate
+        expr: rate(tektoncd_pruner_resources_errors_total[5m]) > 0.5
+        for: 1m
+        labels:
+          severity: critical
+          component: tekton-pruner
+        annotations:
+          summary: "Tekton Pruner experiencing critical error rate"
+          description: "The Tekton Pruner has a critical error rate of {{ $value }} errors per second for namespace {{ $labels.namespace }} and resource type {{ $labels.resource_type }}"
+
+      # Slow Reconciliation Alert
+      - alert: TektonPrunerSlowReconciliation
+        expr: histogram_quantile(0.95, rate(tektoncd_pruner_reconciliation_duration_seconds_bucket[5m])) > 30
+        for: 5m
+        labels:
+          severity: warning
+          component: tekton-pruner
+        annotations:
+          summary: "Tekton Pruner reconciliation is slow"
+          description: "95th percentile reconciliation duration is {{ $value }}s for resource type {{ $labels.resource_type }}"
+
+      # Very Slow Reconciliation Alert
+      - alert: TektonPrunerVerySlowReconciliation
+        expr: histogram_quantile(0.95, rate(tektoncd_pruner_reconciliation_duration_seconds_bucket[5m])) > 60
+        for: 2m
+        labels:
+          severity: critical
+          component: tekton-pruner
+        annotations:
+          summary: "Tekton Pruner reconciliation is very slow"
+          description: "95th percentile reconciliation duration is {{ $value }}s for resource type {{ $labels.resource_type }}, indicating performance issues"
+
+      # High Pending Deletions Alert
+      - alert: TektonPrunerHighPendingDeletions
+        expr: tektoncd_pruner_pending_deletions_count > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: tekton-pruner
+        annotations:
+          summary: "High number of pending deletions"
+          description: "There are {{ $value }} resources pending deletion for {{ $labels.resource_type }} in namespace {{ $labels.namespace }}"
+
+      # Very High Pending Deletions Alert
+      - alert: TektonPrunerVeryHighPendingDeletions
+        expr: tektoncd_pruner_pending_deletions_count > 500
+        for: 2m
+        labels:
+          severity: critical
+          component: tekton-pruner
+        annotations:
+          summary: "Very high number of pending deletions"
+          description: "There are {{ $value }} resources pending deletion for {{ $labels.resource_type }} in namespace {{ $labels.namespace }}, indicating potential issues with deletion processing"
+
+      # No Resource Processing Alert
+      - alert: TektonPrunerNoResourceProcessing
+        expr: rate(tektoncd_pruner_resources_processed_total[10m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          component: tekton-pruner
+        annotations:
+          summary: "Tekton Pruner not processing resources"
+          description: "No resources have been processed in the last 10 minutes, indicating the pruner may not be functioning"
+
+      # API Error Rate Alert
+      - alert: TektonPrunerHighAPIErrorRate
+        expr: rate(tektoncd_pruner_resources_errors_total{error_type="api_error"}[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+          component: tekton-pruner
+        annotations:
+          summary: "High API error rate in Tekton Pruner"
+          description: "High rate of API errors ({{ $value }}/sec) for {{ $labels.resource_type }} in namespace {{ $labels.namespace }}"
+
+      # Permission Error Alert
+      - alert: TektonPrunerPermissionErrors
+        expr: increase(tektoncd_pruner_resources_errors_total{error_type="permission"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: tekton-pruner
+        annotations:
+          summary: "Permission errors in Tekton Pruner"
+          description: "Permission errors detected for {{ $labels.resource_type }} in namespace {{ $labels.namespace }}. Check RBAC configuration."
+
+      # Timeout Error Alert
+      - alert: TektonPrunerTimeoutErrors
+        expr: rate(tektoncd_pruner_resources_errors_total{error_type="timeout"}[5m]) > 0.02
+        for: 5m
+        labels:
+          severity: warning
+          component: tekton-pruner
+        annotations:
+          summary: "Timeout errors in Tekton Pruner"
+          description: "High rate of timeout errors ({{ $value }}/sec) for {{ $labels.resource_type }} in namespace {{ $labels.namespace }}"
+
+      # Metrics Endpoint Down Alert
+      - alert: TektonPrunerMetricsDown
+        expr: up{job="tekton-pruner-controller"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: tekton-pruner
+        annotations:
+          summary: "Tekton Pruner metrics endpoint is down"
+          description: "The Tekton Pruner metrics endpoint has been down for more than 2 minutes"
+
+      # High Memory Usage Alert (if runtime metrics are enabled)
+      - alert: TektonPrunerHighMemoryUsage
+        expr: go_memstats_alloc_bytes{job="tekton-pruner-controller"} / 1024 / 1024 > 500
+        for: 5m
+        labels:
+          severity: warning
+          component: tekton-pruner
+        annotations:
+          summary: "Tekton Pruner high memory usage"
+          description: "Tekton Pruner is using {{ $value }}MB of memory, which may indicate a memory leak"
+
+      # Goroutine Leak Alert (if runtime metrics are enabled)
+      - alert: TektonPrunerGoroutineLeak
+        expr: go_goroutines{job="tekton-pruner-controller"} > 1000
+        for: 10m
+        labels:
+          severity: warning
+          component: tekton-pruner
+        annotations:
+          summary: "Potential goroutine leak in Tekton Pruner"
+          description: "Tekton Pruner has {{ $value }} goroutines, which may indicate a goroutine leak"
+
+      # Old Resource Age Alert
+      - alert: TektonPrunerOldResourcesNotDeleted
+        expr: histogram_quantile(0.95, rate(tektoncd_pruner_resource_age_at_deletion_seconds_bucket[1h])) > 7*24*3600
+        for: 30m
+        labels:
+          severity: warning
+          component: tekton-pruner
+        annotations:
+          summary: "Very old resources are being deleted"
+          description: "95th percentile resource age at deletion is {{ $value }}s ({{ $value | humanizeDuration }}), indicating pruning may not be working efficiently"
+
+      # Low Deletion Rate Alert
+      - alert: TektonPrunerLowDeletionRate
+        expr: rate(tektoncd_pruner_resources_deleted_total[1h]) < 0.001
+        for: 2h
+        labels:
+          severity: info
+          component: tekton-pruner
+        annotations:
+          summary: "Low resource deletion rate"
+          description: "Resource deletion rate is {{ $value }}/sec for {{ $labels.operation }}, which may indicate no resources need pruning or configuration issues"
